@@ -1,0 +1,122 @@
+# bridge-publish — four-nations-bridge release pipeline.
+#
+# Builds the four-nations-bridge container image multi-arch (amd64 for
+# Mac/Linux/Intel-NAS, arm64 for Apple-Silicon Docker Desktop + ARM Synology
+# models), publishes it to GHCR, and SIGNS it KEYLESS via Sigstore — the image
+# is signed under this workflow's GitHub OIDC identity (no private key to store
+# or rotate), and the signature is recorded in the Rekor transparency log. The
+# install scripts (scripts/install-*.sh) verify that signature against the
+# expected signer identity + OIDC issuer and HARD-STOP when it doesn't match.
+#
+# Threat model: signing defeats a compromise of the registry itself — an
+# attacker who can push to GHCR can't produce a signature that verifies as
+# this workflow under GitHub's OIDC issuer. It does NOT by itself defend a
+# compromised build pipeline / org (a different attack class); the public Rekor
+# log makes every signature auditable after the fact.
+#
+# Releases are tag-driven: push a semver tag `vX.Y.Z` (e.g. v1.0.0) and this
+# workflow builds, publishes `:X.Y.Z` + `:latest`, and signs the digest.
+# Keyless needs no secrets — only the `id-token: write` permission below.
+
+name: bridge-publish
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*' # e.g. v1.0.0 — semver tag-driven releases
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write # Sigstore keyless signing + Rekor transparency-log upload
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/four-nations-bridge
+
+jobs:
+  build-publish-sign:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version from the release tag
+        id: version
+        # Tag push: the image version IS the tag minus its leading 'v'
+        # (v1.0.0 -> 1.0.0). Manual runs (workflow_dispatch) fall back to
+        # package.json so a dispatch still produces a sensible tag.
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(node -p "require('./package.json').version")"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push (linux/amd64 + linux/arm64)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_NAME }}:latest
+          # Provenance attestation off — cosign below is the verification
+          # contract the install scripts implement; mixed-media manifests
+          # confuse some older Synology Container Manager versions.
+          provenance: false
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the published digest (keyless / Sigstore)
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        # Keyless: cosign mints a short-lived Fulcio cert from this job's GitHub
+        # OIDC token (id-token: write above) and logs the signature to Rekor —
+        # no private key anywhere. Sign the DIGEST (immutable), not the tag,
+        # which is exactly what the install scripts verify after pulling.
+        run: |
+          cosign sign --yes "${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+      - name: Verification smoke (keyless identity must verify what we just signed)
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        # Fail the publish if the just-signed image doesn't verify against this
+        # workflow's own identity — catches a broken signature before any
+        # install script ever sees it. GITHUB_REF is the exact signer identity
+        # cosign recorded (e.g. refs/tags/v1.0.0).
+        run: |
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/bridge-publish.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+      - name: Job summary
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "## four-nations-bridge published"
+            echo "- image: \`${IMAGE_NAME}:${IMAGE_VERSION}\` (+ \`latest\`)"
+            echo "- digest: \`${IMAGE_DIGEST}\`"
+            echo "- platforms: linux/amd64, linux/arm64"
+            echo "- signed: cosign keyless / Sigstore (GitHub OIDC + Rekor transparency log)"
+          } >> "$GITHUB_STEP_SUMMARY"

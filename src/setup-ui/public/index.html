@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+    />
+    <title>Four Nations Bridge · Setup</title>
+    <!-- Favicon vendored from the Four Nations web app so the
+         bridge UI matches the web app. Re-vendor on each bridge release (same
+         cadence as the design tokens in styles.css). TODO(phase-e-branding):
+         once per-tenant branding ships, fetch the paired account's favicon from
+         the SaaS at connect time and serve that instead of this default. -->
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Sets the theme on <html> before first paint (no flash). External (not
+         inline) to satisfy the CSP script-src 'self'. -->
+    <script src="theme-init.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page__header">
+        <div class="page__title">
+          <h1>Four Nations Bridge</h1>
+          <p class="phase" id="page-subtitle">Phase F · V0.8</p>
+        </div>
+        <button
+          class="theme-toggle"
+          id="theme-toggle"
+          type="button"
+          aria-label="Switch between light and dark theme"
+          title="Switch theme"
+        >
+          <svg class="theme-toggle__icon theme-toggle__moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+          </svg>
+          <svg class="theme-toggle__icon theme-toggle__sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+            </g>
+          </svg>
+        </button>
+      </header>
+
+      <!-- ════════ Pairing wizard (shown while UNPAIRED) ════════
+           Copy discipline (Q2 lock): pairing is between the creator's ACCOUNT
+           and this bridge. Never "your browser is paired". This page is the
+           canonical pairing-language reference for V0.8.c retrofits. -->
+      <section class="wizard" id="wizard" hidden>
+        <ol class="wizard__steps" aria-label="Setup progress">
+          <li class="wizard__step" id="step-ind-1">1 · Pair</li>
+          <li class="wizard__step" id="step-ind-2">2 · Content folder</li>
+          <li class="wizard__step" id="step-ind-3">3 · Confirm</li>
+        </ol>
+
+        <!-- Step 1: pairing -->
+        <section class="card wizard__panel" id="wizard-step-1" aria-labelledby="pair-h">
+          <h2 id="pair-h">Pair this bridge with your account</h2>
+          <p class="helper">
+            Pairing connects this bridge to your account — not to a particular browser or
+            device. Once paired, any device you sign in on can browse the content this
+            bridge indexes.
+          </p>
+          <div class="field">
+            <label for="pairing-code">Pairing code</label>
+            <input
+              type="password"
+              id="pairing-code"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Paste the pairing code from your account"
+            />
+            <p class="helper helper--tight">
+              You received this code with your install instructions. It never leaves this
+              machine except to verify with the service.
+            </p>
+          </div>
+          <!-- Encryption key — shown only when it wasn't already set during install
+               (needsEncryptionKey). Web-UI-first onboarding: the creator can enter it
+               here instead of editing a config file. -->
+          <div class="field" id="enc-key-field" hidden>
+            <label for="encryption-key">Content lock key</label>
+            <input
+              type="password"
+              id="encryption-key"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Paste the long key from your install instructions"
+            />
+            <p class="helper helper--tight">
+              This scrambles your thumbnails and previews so only you can see them. It’s the long
+              code (letters a–f and numbers 0–9) that came with your install instructions. It stays
+              on this machine.
+            </p>
+          </div>
+          <div class="field">
+            <label for="device-label">Bridge name</label>
+            <input
+              type="text"
+              id="device-label"
+              autocomplete="off"
+              maxlength="64"
+              placeholder="e.g. Studio NAS"
+            />
+            <p class="helper helper--tight">
+              How this bridge appears in your account. Letters, numbers, spaces, “_”, “.”, “-”.
+            </p>
+          </div>
+          <p class="wizard__error" id="pair-error" role="alert" hidden></p>
+          <div class="wizard__actions">
+            <button class="button" id="pair-submit" type="button">Verify &amp; pair</button>
+            <span class="wizard__busy" id="pair-busy" hidden>Verifying with the service…</span>
+          </div>
+        </section>
+
+        <!-- Step 2: confirm folders + permission checks -->
+        <section class="card wizard__panel" id="wizard-step-2" aria-labelledby="root-h" hidden>
+          <h2 id="root-h">Confirm your folders</h2>
+          <p class="helper">
+            The bridge reads your content in place (nothing is uploaded, moved, or changed)
+            and keeps its own generated files — thumbnails, previews, the pairing state — in
+            a separate working folder. Both were set during install; we just confirm the
+            bridge can reach them with the right permissions.
+          </p>
+          <div class="field">
+            <label for="root-path">
+              Content folder <span class="perm-tag">needs read</span>
+            </label>
+            <input
+              type="text"
+              id="root-path"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="/path/to/your/content"
+            />
+            <p class="helper helper--tight">The folder the bridge indexes for your account.</p>
+            <p class="folder-status" id="content-status" hidden></p>
+          </div>
+          <div class="wizard__suggestions" id="root-suggestions" hidden>
+            <p class="helper helper--tight">Folders available to this bridge:</p>
+            <ul id="root-suggestion-list"></ul>
+          </div>
+          <div class="field">
+            <label>
+              Bridge working folder <span class="perm-tag perm-tag--rw">needs read &amp; write</span>
+            </label>
+            <p class="folder-readonly" id="managed-path">—</p>
+            <p class="helper helper--tight">
+              Generated thumbnails, previews, and the pairing state live here — never inside
+              your content. Set at install; change it by re-running the installer.
+            </p>
+            <p class="folder-status" id="managed-status" hidden></p>
+          </div>
+
+          <!-- Remediation (shown only when a permission check fails). Two routes,
+               per operator decision: a copy-paste AI prompt (handles any NAS/OS)
+               and the installer-emitted fix-perms.sh. -->
+          <div class="remediation" id="perm-remediation" hidden>
+            <p class="helper helper--tight">
+              The bridge runs as user <code id="remediation-runas">—</code>. Grant it the
+              access above with either route:
+            </p>
+            <div class="remediation__actions">
+              <button class="button button--secondary" id="copy-prompt" type="button">
+                Copy setup prompt
+              </button>
+              <span class="remediation__copied" id="copy-prompt-done" hidden>Copied ✓</span>
+            </div>
+            <p class="helper helper--tight">
+              Paste it into ChatGPT or Claude for exact, safe commands for your system, then
+              run them on the machine that holds these folders. Or run the
+              <code>fix-perms.sh</code> script the installer left in your install folder
+              (open it first to review), then re-check.
+            </p>
+          </div>
+
+          <p class="wizard__error" id="root-error" role="alert" hidden></p>
+          <div class="wizard__actions">
+            <button class="button" id="root-submit" type="button">Check folders</button>
+            <button class="button button--secondary" id="root-back" type="button">Back</button>
+            <span class="wizard__busy" id="root-busy" hidden>Checking…</span>
+          </div>
+        </section>
+
+        <!-- Step 3: confirm -->
+        <section class="card wizard__panel" id="wizard-step-3" aria-labelledby="confirm-h" hidden>
+          <h2 id="confirm-h">Confirm and finish</h2>
+          <dl class="kv">
+            <dt>Bridge name</dt>
+            <dd id="confirm-label">—</dd>
+            <dt>Content folder</dt>
+            <dd id="confirm-root">—</dd>
+            <dt>Working folder</dt>
+            <dd id="confirm-managed">—</dd>
+            <dt>Service</dt>
+            <dd id="confirm-saas">—</dd>
+          </dl>
+          <p class="helper">
+            Finishing saves the pairing on this machine and connects the bridge to your
+            account. Your content stays where it is — the service receives the file index
+            and thumbnails, never your full files.
+          </p>
+          <p class="wizard__error" id="confirm-error" role="alert" hidden></p>
+          <div class="wizard__actions">
+            <button class="button" id="confirm-submit" type="button">Finish setup</button>
+            <button class="button button--secondary" id="confirm-back" type="button">Back</button>
+            <span class="wizard__busy" id="confirm-busy" hidden>Finishing…</span>
+          </div>
+        </section>
+
+        <!-- Step 4: success -->
+        <section class="card wizard__panel wizard__panel--success" id="wizard-step-4" aria-labelledby="done-h" hidden>
+          <h2 id="done-h">Your account is paired with this bridge ✓</h2>
+          <p id="done-browse-wrap" hidden>
+            <a class="button" id="done-browse-link" target="_blank" rel="noopener">Browse your content →</a>
+          </p>
+          <p class="helper">
+            Your content is indexing now and will appear in your library shortly. You can close
+            this window — the bridge keeps running in the background and reconnects on its own
+            after restarts.
+          </p>
+          <p class="helper">
+            Pairing is account-level: sign in from your phone, laptop, or tablet and your
+            content library is available everywhere — nothing to set up per device.
+          </p>
+          <p class="helper">
+            Want to share with a partner? Do it in the web app — invite them from your account
+            settings, and they’ll browse this bridge’s content from their <em>own</em> account’s
+            bridge page (accounts are never shared). An agency admin can see this bridge only if
+            you choose to share it.
+          </p>
+        </section>
+      </section>
+
+      <!-- ════════ Status view (shown once PAIRED) ════════ -->
+      <section id="status-view" hidden>
+      <section class="card status-card" aria-labelledby="status-h">
+        <h2 id="status-h">Connection</h2>
+        <p class="status-row">
+          <span class="dot dot--unknown" id="status-dot" aria-hidden="true"></span>
+          <span class="status-label" id="status-label">loading…</span>
+        </p>
+        <dl class="kv">
+          <dt>Bridge name</dt>
+          <dd id="kv-device-label">—</dd>
+          <dt>Platform</dt>
+          <dd id="kv-device-platform">—</dd>
+          <dt>SaaS URL</dt>
+          <dd id="kv-saas-url">—</dd>
+          <dt>Source root</dt>
+          <dd id="kv-source-root">—</dd>
+          <dt>App version</dt>
+          <dd id="kv-app-version">—</dd>
+          <dt>Bridge device id</dt>
+          <dd id="kv-bridge-device-id">—</dd>
+          <dt>Pairing</dt>
+          <dd id="kv-pairing">—</dd>
+          <dt>Reconnect attempts</dt>
+          <dd id="kv-reconnect-attempts">—</dd>
+          <dt>Last event</dt>
+          <dd id="kv-last-event">—</dd>
+        </dl>
+      </section>
+
+      <!-- ════════ Security: harden the bridge account (post-pairing) ════════ -->
+      <section class="card" id="security-card" aria-labelledby="security-h" hidden>
+        <h2 id="security-h">Security · bridge account</h2>
+        <p class="status-row">
+          <span class="dot dot--unknown" id="security-dot" aria-hidden="true"></span>
+          <span class="status-label" id="security-summary">…</span>
+        </p>
+        <p class="helper">
+          The bridge runs as <code id="security-runas">—</code>. Running it as a
+          <strong>dedicated low-privilege user</strong> limits the damage if the container is
+          ever compromised — recommended for sensitive content. The browser can't change this
+          live (the user is fixed when the container starts), so pick a route below, run the
+          commands on the machine that hosts the bridge, and reload this page to verify.
+        </p>
+        <div class="harden-routes" id="harden-routes">
+          <button class="button button--secondary" data-route="auto" type="button">Auto-create for me</button>
+          <button class="button button--secondary" data-route="guided" type="button">Guide me</button>
+          <button class="button button--secondary" data-route="info" type="button">Keep current</button>
+        </div>
+        <div id="harden-blocks"></div>
+        <div class="field" id="harden-uid-field" hidden>
+          <label for="harden-uid">New user's uid:gid</label>
+          <input type="text" id="harden-uid" placeholder="e.g. 1099:100" autocomplete="off" spellcheck="false" />
+          <p class="wizard__error" id="harden-uid-error" role="alert" hidden></p>
+          <div class="wizard__actions">
+            <button class="button" id="harden-uid-apply" type="button">Generate restart command</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card status-card" aria-labelledby="sync-h">
+        <h2 id="sync-h">Initial sync</h2>
+        <p class="status-row">
+          <span class="dot dot--unknown" id="sync-dot" aria-hidden="true"></span>
+          <span class="status-label" id="sync-label">—</span>
+        </p>
+        <dl class="kv">
+          <dt>Entries scanned</dt>
+          <dd id="kv-entries-scanned">—</dd>
+          <dt>Batches pushed</dt>
+          <dd id="kv-batches-pushed">—</dd>
+          <dt>Started</dt>
+          <dd id="kv-sync-started">—</dd>
+          <dt>Finished</dt>
+          <dd id="kv-sync-finished">—</dd>
+          <dt>Last batch</dt>
+          <dd id="kv-sync-last-batch">—</dd>
+          <dt>Error</dt>
+          <dd id="kv-sync-error">—</dd>
+        </dl>
+      </section>
+
+      <section class="card status-card" aria-labelledby="thumb-h">
+        <h2 id="thumb-h">Thumbnail sync</h2>
+        <p class="status-row">
+          <span class="dot dot--unknown" id="thumb-dot" aria-hidden="true"></span>
+          <span class="status-label" id="thumb-label">—</span>
+        </p>
+        <dl class="kv">
+          <dt>Videos processed</dt>
+          <dd id="kv-videos-processed">—</dd>
+          <dt>Images processed</dt>
+          <dd id="kv-images-processed">—</dd>
+          <dt>Thumbs written</dt>
+          <dd id="kv-thumbs-written">—</dd>
+          <dt>Thumbs pushed</dt>
+          <dd id="kv-thumbs-pushed">—</dd>
+          <dt>Skipped (already done)</dt>
+          <dd id="kv-skipped-done">—</dd>
+          <dt>Skipped (untyped)</dt>
+          <dd id="kv-skipped-untyped">—</dd>
+          <dt>Failed</dt>
+          <dd id="kv-thumb-failed">—</dd>
+          <dt>Current file</dt>
+          <dd id="kv-thumb-current">—</dd>
+          <dt>Started</dt>
+          <dd id="kv-thumb-started">—</dd>
+          <dt>Finished</dt>
+          <dd id="kv-thumb-finished">—</dd>
+        </dl>
+      </section>
+
+      <section class="card helper-card" aria-labelledby="next-h">
+        <h2 id="next-h">About this bridge</h2>
+        <p class="helper">
+          This bridge indexes your content folder and serves thumbnails + previews to your
+          account over an outbound encrypted connection. Your content stays on this machine —
+          the service never stores your full files.
+        </p>
+        <p class="helper">
+          Your account is paired with this bridge — sign in from any device and your content
+          library is available there. To re-pair (new pairing code or a different account),
+          see the “Re-pairing” section of the install docs: delete
+          <code>paired.json</code> from the bridge’s state folder and restart the container.
+        </p>
+        <p class="helper">
+          Failing handshake? Check the pairing is intact (this page shows “Pairing: wizard”
+          or “Pairing: env”) and that <code>CONTENT_BRIDGE_SAAS_URL</code> resolves from this
+          container’s network namespace.
+        </p>
+      </section>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

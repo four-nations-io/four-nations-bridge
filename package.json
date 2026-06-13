@@ -1,0 +1,29 @@
+{
+  "name": "four-nations-bridge",
+  "version": "0.1.0-v0.3",
+  "description": "Cross-platform desktop content bridge for the Four Nations web app. Runs as a Docker container on the creator's NAS / Mac / PC; pushes file metadata + encrypted thumbnails + encrypted byte-range previews to the service over an outbound WSS connection.",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-public-assets.mjs",
+    "start": "node dist/main.js",
+    "dev": "npm run build && node dist/main.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "sharp": "^0.33.5",
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/fluent-ffmpeg": "^2.1.27",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

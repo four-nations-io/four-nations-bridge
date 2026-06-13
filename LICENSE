@@ -1,0 +1,24 @@
+Copyright (c) 2026 Four Nations. All rights reserved.
+
+The four-nations-bridge software, including its source code, container images,
+installation scripts, and documentation in this repository (the "Software"), is
+proprietary and confidential.
+
+The Software is made available solely so that authorized users may install and
+run the bridge to connect to the Four Nations service. No license is granted to
+copy, modify, merge, publish, distribute, sublicense, sell, reverse-engineer, or
+create derivative works of the Software, in whole or in part, except as expressly
+authorized in writing by the copyright holder.
+
+Publication of container images and installation scripts is provided for that
+install-and-run purpose only and does not grant any of the rights withheld above.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Third-party dependencies bundled in the container images remain under their own
+respective licenses.
