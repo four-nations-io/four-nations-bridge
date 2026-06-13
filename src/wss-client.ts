@@ -112,11 +112,13 @@ export interface SharedState {
    *  only genuine false→true transitions AFTER the baseline trigger a gen. */
   enabledBaselineEstablished: boolean;
   runtimeSettings: RuntimeSettingsState;
-  /** Last resolution of the gateway-driven source roots (V0.6). The walk/index
-   *  flow still runs on the legacy `config.sourceRoot` in V0.6.a; these are
-   *  reported back to the gateway (active/needs_mount/writable) and gate
-   *  create-project targeting. V0.6.b refactors the orchestrator to index each
-   *  active root directly. */
+  /** Last resolution of the gateway-driven source roots (V0.6). Phase F cutover
+   *  (planning doc 65): `config.sourceRoot` is now the MIRROR of the registered
+   *  content root (`/sources/host<host_path>`), so the index walk runs on the
+   *  source-roots-registered content root — NOT a hardcoded /sources/local. These
+   *  resolved roots report status (active/needs_mount/writable) + gate create-
+   *  project targeting + cache placement. V3 multi-volume: index each active root
+   *  directly (loop + per-root attribution + the rel_path/root_id schema reshape). */
   sourceRoots: ResolvedSourceRoot[];
   /** V0.7.b: last-seen directory mtimes (rel path → epoch ms), for the
    *  incremental mtime-diff reindex sweep. '' = the source root itself. */
@@ -327,8 +329,16 @@ export function startWssClient(state: SharedState): WssClient {
         // as this device's first source root (INSERT … ON CONFLICT DO NOTHING
         // — idempotent across reconnects; a root the operator later disables
         // stays disabled because re-HELLO never re-arms an existing row).
-        ...(state.pairing.initialSourceRootHostPath
-          ? { initialSourceRootHostPath: state.pairing.initialSourceRootHostPath }
+        // Phase F cutover (planning doc 65): auto-register the operator's content
+        // root from env (config.hostContentPath) when the wizard/paired.json didn't
+        // supply one — so an env-bearer bridge registers its source root on connect
+        // and Browse + the folders panel work with zero CLI. Gateway insert is
+        // idempotent (ON CONFLICT DO NOTHING), so re-HELLO across reconnects is safe.
+        ...(state.pairing.initialSourceRootHostPath || state.config.hostContentPath
+          ? {
+              initialSourceRootHostPath:
+                state.pairing.initialSourceRootHostPath || state.config.hostContentPath,
+            }
           : {}),
       };
       ws.send(JSON.stringify(hello));

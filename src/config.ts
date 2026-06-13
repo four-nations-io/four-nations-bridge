@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { hostPathToContainerPath } from './source-roots/resolve';
+
 // Phase F content-bridge env contract. Validated at boot via `loadConfig()`;
 // throws on missing-or-malformed required vars so misconfiguration fails fast
 // rather than producing a half-running bridge.
@@ -74,13 +76,18 @@ const ConfigSchema = z.object({
 
   // V0.3 thumb config
   thumbWritableRoot: z.string().min(1),
-  /** Optional: the host-side content path (what `:ro` and `:rw` mount from).
-   *  Surfaced only for logging — gives the operator a readable path in
-   *  "thumb: starting [<host-path>] ..." log lines instead of the cryptic
-   *  container-side "/sources/local" or empty "<mount root>". Operator sets
-   *  CONTENT_BRIDGE_HOST_CONTENT_PATH in .env (already required for the
-   *  volume mount). Empty when not set. */
-  hostContentPath: z.string(),
+  /** Phase F cutover (planning doc 65): the absolute HOST path to the operator's
+   *  content folder. Now load-bearing + REQUIRED — it derives the index root (the
+   *  mirror `/sources/host<host_path>`, see `sourceRoot` below) AND is auto-
+   *  registered as this device's source root on HELLO (so Browse works with zero
+   *  CLI). Still the readable path in "thumb: starting [<host-path>] ..." logs. */
+  hostContentPath: z
+    .string()
+    .min(1, 'CONTENT_BRIDGE_HOST_CONTENT_PATH is required (absolute host path to your content folder)')
+    .refine(
+      (s) => hostPathToContainerPath(s) !== null,
+      'CONTENT_BRIDGE_HOST_CONTENT_PATH must be an absolute path with no ".." segments'
+    ),
   /**
    * Sub-path within each project where the bridge writes thumbs. ALWAYS
    * constrained to inside the project folder per operator preference. Default
@@ -247,7 +254,12 @@ export function loadConfig(): BridgeConfig {
     devicePlatform: process.env.CONTENT_BRIDGE_DEVICE_PLATFORM ?? '',
     bearer: process.env.CONTENT_BRIDGE_BEARER ?? '',
     deviceLabel: process.env.CONTENT_BRIDGE_DEVICE_LABEL ?? '',
-    sourceRoot: process.env.CONTENT_BRIDGE_SOURCE_ROOT ?? '/sources/local',
+    // Phase F cutover (planning doc 65): the bridge indexes + serves from the
+    // source-roots model, not a hardcoded /sources/local. The index root is the
+    // MIRROR of the operator's content path (`/sources/host<host_path>`) — the
+    // SAME host directory as the old /sources/local, so rel_paths are byte-
+    // identical (no re-index). CONTENT_BRIDGE_SOURCE_ROOT is no longer read.
+    sourceRoot: hostPathToContainerPath(process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '') ?? '',
     encryptionKeyHex: process.env.CONTENT_BRIDGE_ENCRYPTION_KEY ?? '',
     thumbWritableRoot: process.env.CONTENT_BRIDGE_THUMB_WRITABLE_ROOT ?? '/writable/source',
     hostContentPath: process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '',
@@ -259,7 +271,7 @@ export function loadConfig(): BridgeConfig {
     thumbMaxDimPx: Number(process.env.CONTENT_BRIDGE_THUMB_MAX_DIM_PX ?? '1080'),
     thumbJpegQuality: Number(process.env.CONTENT_BRIDGE_THUMB_JPEG_QUALITY ?? '80'),
     cacheRoot: process.env.CONTENT_BRIDGE_CACHE_ROOT ?? '/data/cache',
-    thumbOutputMode: process.env.CONTENT_BRIDGE_THUMB_OUTPUT_MODE ?? 'in_place',
+    thumbOutputMode: process.env.CONTENT_BRIDGE_THUMB_OUTPUT_MODE ?? 'cache_dir',
     managedRoot: process.env.CONTENT_BRIDGE_MANAGED_ROOT ?? '/data/managed',
     managedEnabled:
       (process.env.CONTENT_BRIDGE_MANAGED_ENABLED ?? 'true').toLowerCase() !== 'false',

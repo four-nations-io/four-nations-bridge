@@ -10,10 +10,9 @@
 #
 # Supply-chain model (see docs/install/security.md):
 #   pull image → resolve its immutable digest → cosign-verify THAT digest
-#   keyless (Sigstore): the signature must be from the publisher's GitHub
-#   Actions release workflow (identity) under GitHub's OIDC issuer → generate
-#   compose pinned to the digest → start. The tag is only used to discover the
-#   digest; what runs is exactly what was verified (no verify-then-repush TOCTOU).
+#   against the publisher public key embedded below → generate compose pinned
+#   to the digest → start. The tag is only used to discover the digest; what
+#   runs is exactly what was verified (no verify-then-repush TOCTOU).
 #
 # curl-pipe-sh note: these scripts are safe to download-first-then-inspect,
 # and the docs recommend exactly that. Nothing here requires piping.
@@ -24,7 +23,7 @@ set -euo pipefail
 
 # Published bridge image. The version tag is what releases advertise;
 # override FN_BRIDGE_IMAGE to pin a specific version.
-FN_BRIDGE_IMAGE="${FN_BRIDGE_IMAGE:-ghcr.io/four-nations-io/four-nations-bridge:latest}"
+FN_BRIDGE_IMAGE="${FN_BRIDGE_IMAGE:-ghcr.io/REPLACE-GHCR-OWNER/four-nations-bridge:latest}"
 
 # Setup wizard port on the creator's machine (always bound to 127.0.0.1).
 FN_BRIDGE_UI_PORT="${FN_BRIDGE_UI_PORT:-8124}"
@@ -33,12 +32,12 @@ FN_BRIDGE_UI_PORT="${FN_BRIDGE_UI_PORT:-8124}"
 # signature verification. Never use this for a real install.
 FN_BRIDGE_ALLOW_UNSIGNED="${FN_BRIDGE_ALLOW_UNSIGNED:-0}"
 
-# Keyless (Sigstore) signer identity. The image is signed in CI by this repo's
-# publish workflow via GitHub OIDC — there is NO public key to embed. Verification
-# checks the signer identity (the release workflow, on a vX.Y.Z tag) and the OIDC
-# issuer (GitHub). Both are overridable for forks / self-hosting.
-FN_BRIDGE_COSIGN_IDENTITY="${FN_BRIDGE_COSIGN_IDENTITY:-^https://github\.com/four-nations-io/four-nations-bridge/\.github/workflows/bridge-publish\.yml@refs/tags/v}"
-FN_BRIDGE_COSIGN_OIDC_ISSUER="${FN_BRIDGE_COSIGN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
+# Publisher cosign public key. Embedded (not fetched) so the script's own
+# integrity covers the key — replace the placeholder when the release key is
+# generated (cosign generate-key-pair; private half lives ONLY in CI secrets).
+FN_BRIDGE_COSIGN_PUBKEY='-----BEGIN PUBLIC KEY-----
+REPLACE-WITH-PUBLISHER-COSIGN-PUBLIC-KEY
+-----END PUBLIC KEY-----'
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -219,7 +218,7 @@ bridge_prompt_config() {
       FN_BRIDGE_UI_BIND="0.0.0.0"
       bridge_say "LAN address"
       bridge_note "How will you reach this machine from your laptop? Enter its LAN IP or"
-      bridge_note "hostname (e.g. 192.168.1.20 or nas.local) — used to build your setup link."
+      bridge_note "hostname (e.g. 192.168.1.50 or nas.local) — used to build your setup link."
       read -r -p "  This machine's LAN address: " FN_LAN_HOST
       FN_LAN_HOST="${FN_LAN_HOST%/}"
     else
@@ -246,21 +245,24 @@ bridge_pull_and_verify_image() {
     return 0
   fi
 
+  if printf '%s' "$FN_BRIDGE_COSIGN_PUBKEY" | grep -q 'REPLACE-WITH-PUBLISHER'; then
+    bridge_die "This copy of the install script has no publisher key embedded — it can't verify the image. Download the script from the official release (or, for dev only, re-run with FN_BRIDGE_ALLOW_UNSIGNED=1)."
+  fi
   if ! command -v cosign >/dev/null 2>&1; then
     bridge_die "cosign is required to verify the image signature. Install: https://docs.sigstore.dev/cosign/system_config/installation/"
   fi
 
-  bridge_say "Verifying image signature (cosign keyless / Sigstore)…"
-  # HARD STOP on any verification failure — never warn-and-continue. Keyless:
-  # the signature must come from the publisher's release workflow (identity)
-  # under GitHub's OIDC issuer, and be present in the Rekor transparency log.
-  if ! cosign verify \
-        --certificate-identity-regexp "$FN_BRIDGE_COSIGN_IDENTITY" \
-        --certificate-oidc-issuer "$FN_BRIDGE_COSIGN_OIDC_ISSUER" \
-        "$FN_IMAGE_PINNED" >/dev/null 2>&1; then
+  bridge_say "Verifying image signature (cosign)…"
+  local keyfile
+  keyfile="$(mktemp)"
+  printf '%s\n' "$FN_BRIDGE_COSIGN_PUBKEY" > "$keyfile"
+  # HARD STOP on any verification failure — never warn-and-continue.
+  if ! cosign verify --key "$keyfile" "$FN_IMAGE_PINNED" >/dev/null; then
+    rm -f "$keyfile"
     bridge_die "IMAGE SIGNATURE VERIFICATION FAILED for ${FN_IMAGE_PINNED}. Refusing to install. This can mean a compromised registry or a tampered image — do not proceed; report it."
   fi
-  bridge_note "Signature OK (keyless: GitHub Actions OIDC + Rekor)."
+  rm -f "$keyfile"
+  bridge_note "Signature OK."
 }
 
 # Generate <install>/.env + <install>/docker-compose.yml + the bridge-owned
@@ -369,9 +371,9 @@ ${user_line}
       NODE_ENV: production
 
     volumes:
-      # Content — read-only, mounted twice: the legacy index path and the
-      # mirrored per-root path the source-root resolver expects.
-      - "${FN_CONTENT_ROOT}:/sources/local:ro"
+      # Content — READ-ONLY at its MIRRORED container path. The bridge indexes +
+      # serves from here and auto-registers it as the source root on connect
+      # (Phase F cutover, planning doc 65; the legacy /sources/local mount is gone).
       - "${FN_CONTENT_ROOT}:/sources/host${FN_CONTENT_ROOT}:ro"
       # Bridge-owned read-write surfaces — never your content tree. Paired-state
       # lives at managed/_state (the bridge creates it; no separate mount).

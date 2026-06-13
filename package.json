@@ -1,6 +1,6 @@
 {
   "name": "four-nations-bridge",
-  "version": "0.1.0-v0.3",
+  "version": "1.1.0",
   "description": "Cross-platform desktop content bridge for the Four Nations web app. Runs as a Docker container on the creator's NAS / Mac / PC; pushes file metadata + encrypted thumbnails + encrypted byte-range previews to the service over an outbound WSS connection.",
   "private": true,
   "main": "dist/main.js",
