@@ -91,15 +91,32 @@ async function probeBridgePermissions(config: ReturnType<typeof loadConfig>): Pr
     }
   }
   if (failures.length > 0) {
+    // Resolve the value the creator actually needs and PRINT IT, rather than telling them
+    // to go run `stat` themselves — the old message even printed GNU `stat -c`, which fails
+    // on macOS (BSD stat wants -f). Owner lookup usually succeeds even when READ does not
+    // (stat needs traverse on the parents, not read on the target), so in the common
+    // wrong-uid case this hands over a copy-pasteable answer.
+    let ownerHint = '';
+    try {
+      const st = await fsp.stat(config.sourceRoot);
+      ownerHint =
+        `Your content folder is owned by ${st.uid}:${st.gid}. Set this in bridge.env, then ` +
+        `re-run "docker compose --env-file bridge.env up -d":\n` +
+        `    CONTENT_BRIDGE_RUN_AS_USER=${st.uid}:${st.gid}\n`;
+    } catch {
+      ownerHint =
+        `Set CONTENT_BRIDGE_RUN_AS_USER in bridge.env to the uid:gid that owns your content, ` +
+        `then re-run "docker compose --env-file bridge.env up -d". Find it with:\n` +
+        `    macOS:        stat -f '%u:%g' "<your content folder>"\n` +
+        `    Linux / WSL:  stat -c '%u:%g' "<your content folder>"\n`;
+    }
     // eslint-disable-next-line no-console
     console.error(
       `bridge: PERMISSION PROBLEM — the bridge runs as uid:gid ${uid}:${gid} but:\n` +
         `${failures.join('\n')}\n` +
-        `Fix: set CONTENT_BRIDGE_RUN_AS_USER to a uid:gid that owns/can read your content ` +
-        `(find it with: stat -c '%u:%g' <your content path>), and make sure that uid can ` +
-        `write the working folder. If you installed via the script, run fix-perms.sh in your ` +
-        `install folder, or paste setup-account-prompt.txt into an AI assistant. The bridge ` +
-        `keeps running and will pick up access once it's granted.`
+        ownerHint +
+        `The bridge keeps running and will pick up access once it's granted, so you can fix ` +
+        `this and restart without re-pairing.`
     );
   }
 }

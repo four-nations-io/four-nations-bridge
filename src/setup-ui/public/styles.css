@@ -10,6 +10,17 @@
  * until V0.4+ when the setup UI grows real interactive surfaces.
  * ════════════════════════════════════════════════════════════════════════ */
 
+/* The `hidden` ATTRIBUTE must always win. It only carries `display: none` from the UA
+ * stylesheet, so ANY author rule that sets `display` on the same element silently defeats
+ * it — and this page drives its whole state machine by toggling `hidden` from app.js.
+ * Two Part-A classes did exactly that: `.wizard-svg { display: block }` rendered the Step-3
+ * pending + ok + error illustrations ALL AT ONCE, and `.wizard__actions { display: flex }`
+ * left "Try again" on screen after a successful connect. Declared first, and !important so
+ * no later `display` rule can reintroduce the bug. */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   color-scheme: light;
   --bg-accent: #efe9dc;
@@ -505,37 +516,9 @@ code {
   font-size: 0.88rem;
 }
 
-.wizard__suggestions {
-  margin-bottom: 1rem;
-}
-
-.wizard__suggestions ul {
-  list-style: none;
-  margin: 0.4rem 0 0 0;
-  padding: 0;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.wizard__suggestion {
-  appearance: none;
-  border: 1px solid var(--line);
-  background: var(--bg-accent);
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.85rem;
-  padding: 0.4rem 0.65rem;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.wizard__suggestion:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
+/* (Removed 2026-07-29) .wizard__suggestions / .wizard__suggestion styled the Step-2
+   "choose a different folder" list, deleted along with it — the control only changed
+   what was validated and displayed, never the folder the daemon actually indexes. */
 
 /* ── doc 118 Part A: SVG-guided step illustrations ─────────────────────────
  * Theme-aware line-art in the same language as the main app's install wizard

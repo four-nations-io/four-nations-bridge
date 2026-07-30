@@ -144,10 +144,12 @@
             <p class="helper helper--tight">The folder the bridge indexes for your account.</p>
             <p class="folder-status" id="content-status" hidden></p>
           </div>
-          <div class="wizard__suggestions" id="root-suggestions" hidden>
-            <p class="helper helper--tight">Or choose a different folder available to this bridge:</p>
-            <ul id="root-suggestion-list"></ul>
-          </div>
+          <!-- (Removed 2026-07-29) The "Or choose a different folder" suggestion list lived
+               here. Clicking one only changed what got VALIDATED and displayed — the daemon
+               indexes CONTENT_BRIDGE_HOST_CONTENT_PATH from the env either way — so it read
+               as a working folder switcher that silently did nothing. Step 2 is CONFIRM, not
+               edit (doc 118 Part A); changing the content folder means editing bridge.env and
+               restarting. -->
           <div class="field">
             <label>Bridge working folder <span class="perm-tag perm-tag--rw">needs read &amp; write</span></label>
             <p class="folder-readonly" id="managed-path">—</p>

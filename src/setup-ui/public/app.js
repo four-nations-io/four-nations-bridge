@@ -109,8 +109,6 @@
     contentStatus: $('content-status'),
     managedPath: $('managed-path'),
     managedStatus: $('managed-status'),
-    rootSuggestions: $('root-suggestions'),
-    rootSuggestionList: $('root-suggestion-list'),
     permRemediation: $('perm-remediation'),
     copyPrompt: $('copy-prompt'),
     copyPromptDone: $('copy-prompt-done'),
@@ -284,34 +282,13 @@
       showRemediation(setupState.setupPrompt, setupState.runAs);
     }
 
-    // Folder suggestions from what's actually mounted — lets the user switch the content
-    // folder on Step 2 if the env default is wrong.
-    try {
-      const resp = await fetch('/api/setup/mounts', { cache: 'no-store', headers: authHeaders() });
-      if (resp.ok) {
-        const { hostPaths } = await resp.json();
-        if (Array.isArray(hostPaths) && hostPaths.length > 0 && wiz.rootSuggestionList) {
-          wiz.rootSuggestionList.textContent = '';
-          for (const p of hostPaths) {
-            const li = document.createElement('li');
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'wizard__suggestion';
-            btn.textContent = p;
-            btn.addEventListener('click', () => {
-              wizardData.rootPath = p;
-              if (wiz.settingsRoot) wiz.settingsRoot.textContent = p;
-              if (wiz.contentStatus) wiz.contentStatus.hidden = true;
-            });
-            li.appendChild(btn);
-            wiz.rootSuggestionList.appendChild(li);
-          }
-          wiz.rootSuggestions.hidden = false;
-        }
-      }
-    } catch {
-      // Suggestions are a convenience; the env content folder still works.
-    }
+    // (Removed 2026-07-29) The mounted-folder suggestion list was fetched and rendered here.
+    // Selecting one reassigned `wizardData.rootPath`, which only steers the validate-root
+    // check and the on-screen label — the daemon indexes CONTENT_BRIDGE_HOST_CONTENT_PATH
+    // regardless — so it presented as a folder switcher that changed nothing. `GET
+    // /api/setup/mounts` (setup-ui/server.ts) now has no caller; left in place rather than
+    // removed, since a future "change my content folder" feature is the natural consumer and
+    // it is unpaired-gated + read-only.
 
     // ── Step 1: verify the pairing code (claims + stashes the candidate) ──
     wiz.pairSubmit.addEventListener('click', async () => {
