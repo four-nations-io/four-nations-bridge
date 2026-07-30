@@ -9,7 +9,7 @@
 // design): the install binds ONE narrow mount per operator-chosen root, and
 // the container path MIRRORS the host path under a `/sources/host` prefix:
 //
-//   host  /volume1/Media/Content  →  container  /sources/host/volume1/Media/Content
+//   host  /volume1/photo/Content  →  container  /sources/host/volume1/photo/Content
 //
 // Resolution is therefore a deterministic string-concat (no manifest), and a
 // root the operator hasn't bound yet simply fails `fs.stat` → `needs_mount`

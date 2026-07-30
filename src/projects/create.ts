@@ -1,12 +1,16 @@
-// Create-project scaffolding — Phase F V0.6.a.
+// Create-project scaffolding — Phase F V0.6.a (PD77: built-in default layout).
 //
-// Builds a new project folder by COPYING the operator's template folder into a
-// chosen destination (within a WRITABLE source root) and naming the copy
-// `YYYY-MM-DD Title`. The template folder already holds the right subfolder
-// layout (Clips / Final Video / …), so we never hardcode a structure — whatever
-// the operator puts in their template is what every new project starts with.
-// This is the bridge side of the "Create Project Folder" button in the
-// add-video folder picker. Triggered by a CREATE_PROJECT WSS frame.
+// Builds a new project folder inside a chosen destination (within a WRITABLE
+// source root), naming it `YYYY-MM-DD Title`. Three modes:
+//   1. template set      → COPY the operator's template folder (its own subfolder
+//                          layout becomes the new project's starting structure).
+//   2. template requested → scaffold the bridge's BUILT-IN DEFAULT structure
+//      but none set         (DEFAULT_PROJECT_STRUCTURE below) so a creator who
+//                          hasn't configured a template still gets a sensible
+//                          tree (PD77 — was previously rejected).
+//   3. plain folder      → just the named directory, no subfolders.
+// This is the bridge side of the "Create a project" button in the Import Folders
+// modal. Triggered by a CREATE_PROJECT WSS frame.
 //
 // CLOSED-DOWN WRITE MODEL (arch-note 14 §3, planning doc 46 Decisions 2026-06-04):
 // this module is the ENTIRE bridge write surface for creator content, and it is
@@ -25,6 +29,34 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
 const MAX_TITLE_LEN = 120;
+
+/**
+ * PD77: the bridge's built-in default project layout — used when the operator
+ * requested a structured folder ("use my template") but has NOT configured a
+ * template. A flat list of subfolder rel-paths created under the new project
+ * folder (parents auto-created by recursive mkdir; intermediates listed too so
+ * empty branches like `Bloopers` exist). FIXED CONSTANTS — no user input, no
+ * `..` — so they can't escape the (realpath-confined) target. ADD-ONLY: each is
+ * an `fs.mkdir`, never a delete. Keep in sync with the operator's expected tree.
+ */
+export const DEFAULT_PROJECT_STRUCTURE: readonly string[] = [
+  'Bloopers',
+  'Clips',
+  'Documentation',
+  'Final Video',
+  'Main',
+  'Main/Sources',
+  'Music',
+  'Pics',
+  'Pics/Booty',
+  'Pics/Feet',
+  'Pics/Full Body',
+  'Pics/Pussy',
+  'Pics/Stills',
+  'Pics/Titties',
+  'Teaser',
+  'Trailer',
+];
 
 /** Characters illegal in a folder name on Windows + path separators + the
  *  control range. Folded to spaces in the working title. Built via char codes
@@ -49,9 +81,13 @@ export interface CreateProjectRequest {
    *  (relative; '' = the root itself). Validated to stay inside the root. */
   destSubPath: string;
   /** Container path of the template folder to copy (already mirror-resolved by
-   *  the caller). When omitted/empty, a plain named folder is created instead
-   *  (same naming) — the operator opted out of the template for this one. */
+   *  the caller). When omitted/empty, behaviour depends on `useDefaultStructure`:
+   *  the built-in default layout, or a plain named folder. */
   templateContainerPath?: string | null;
+  /** PD77: when no template is set but the operator still asked for a structured
+   *  folder ("use my template" on), scaffold DEFAULT_PROJECT_STRUCTURE instead of
+   *  a plain folder. Ignored when `templateContainerPath` is provided. */
+  useDefaultStructure?: boolean;
   /** Container paths of THIS bridge's active source roots. The template (when
    *  used) must realpath INSIDE one of them, so a compromised gateway can't
    *  point `fs.cp` at an arbitrary mounted dir (V0.6.a hardening). When
@@ -353,8 +389,21 @@ export async function createProject(
         errorOnExist: true,
         force: false,
       });
+    } else if (req.useDefaultStructure) {
+      // PD77: no template configured, but a structured folder was requested →
+      // scaffold the built-in default layout. ADD-ONLY: mkdir the named folder
+      // then each fixed subfolder. Re-confine every subdir under `target`
+      // (defensive — the constants carry no `..`, so this never trips).
+      await fs.mkdir(target, { recursive: true });
+      for (const sub of DEFAULT_PROJECT_STRUCTURE) {
+        const subDir = path.join(target, sub);
+        if (subDir !== target && !subDir.startsWith(target + path.sep)) {
+          continue;
+        }
+        await fs.mkdir(subDir, { recursive: true });
+      }
     } else {
-      // Regular folder: just the named directory, no template structure.
+      // Regular folder: just the named directory, no subfolder structure.
       await fs.mkdir(target, { recursive: true });
     }
   } catch (err) {

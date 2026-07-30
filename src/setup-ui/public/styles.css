@@ -1,7 +1,7 @@
 /* ════════════════════════════════════════════════════════════════════════
  * Four Nations Bridge — Setup UI styles
  *
- * Design tokens vendored from the Four Nations web app
+ * Design tokens VENDORED from four-nations-web/next-app/src/app/globals.css
  * per planning doc 46 §Decisions #18. Sync cadence: re-vendor on each bridge
  * release (no automated sync script in V0.1).
  *
@@ -535,4 +535,27 @@ code {
 .wizard__suggestion:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── doc 118 Part A: SVG-guided step illustrations ─────────────────────────
+ * Theme-aware line-art in the same language as the main app's install wizard
+ * (BridgeSetupWizardClient): strokes use currentColor (inherits --ink, readable
+ * in both themes), highlights use --accent, surfaces use --card / --bg-accent,
+ * status glyphs use --dot-ok / --dot-err. */
+.wizard-illus {
+  margin: 0 0 1.1rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-accent);
+  display: flex;
+  justify-content: center;
+}
+
+.wizard-svg {
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  display: block;
+  color: var(--ink);
 }

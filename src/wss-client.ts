@@ -80,8 +80,19 @@ import {
   type ResolvedSourceRoot,
 } from "./source-roots/resolve";
 import { createProject } from "./projects/create";
+import {
+  enqueueBridgeNotification,
+  loadBridgeNotificationQueue,
+  removeBridgeNotification,
+} from "./notifications/queue";
 
 export type WssStatus = "connecting" | "connected" | "reconnecting" | "stopped";
+
+// E.8a (doc 88): edge flag for the bridge_media_root_unreadable alert — fire ONCE
+// on the transition into "all configured roots unreadable", not every settings
+// tick (which would re-deliver every ~30s). Module-level: resets on restart, which
+// just re-detects on the next resolve.
+let mediaRootUnreadableNotified = false;
 
 export type SyncStatus = "idle" | "walking" | "done" | "error";
 
@@ -252,6 +263,36 @@ export function startWssClient(state: SharedState): WssClient {
     }
   }
 
+  /** E.8a (doc 88): flush the bridge's local notification disk queue to the gateway.
+   *  Sends one USER_NOTIFICATION frame per pending entry; entries are cleared ONLY
+   *  when the gateway returns USER_NOTIFICATION_ACK (see the message handler), so a
+   *  lost ack just re-flushes next tick — idempotent via the stable bridgeEventId
+   *  (the gateway de-dups on (device_id, bridgeEventId)). Best-effort. */
+  async function flushNotificationQueue(ws: WebSocket): Promise<void> {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    let pending;
+    try {
+      pending = await loadBridgeNotificationQueue(state.config.stateDir);
+    } catch {
+      return;
+    }
+    for (const entry of pending) {
+      if (ws.readyState !== WebSocket.OPEN) break;
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "USER_NOTIFICATION",
+            eventCode: entry.eventCode,
+            bridgeEventId: entry.bridgeEventId,
+          }),
+        );
+      } catch {
+        // socket went away mid-flush; the rest re-flush on the next tick/reconnect
+        break;
+      }
+    }
+  }
+
   function setStatus(s: WssStatus, event: { type: string; detail?: unknown }) {
     state.wssStatus = s;
     state.lastWssEvent = { ...event, at: Date.now() };
@@ -362,6 +403,10 @@ export function startWssClient(state: SharedState): WssClient {
           state.runtimeSettings.lastAttemptedAt = Date.now();
           ws.send(JSON.stringify({ type: "SETTINGS_REQUEST" }));
           sendDaemonHeartbeat(ws);
+          // E.8a (doc 88): drain any pending local notifications each tick (so a
+          // CLI-enqueued test or an event detected mid-connection flushes promptly,
+          // not only on the next reconnect).
+          void flushNotificationQueue(ws);
         }
       }, SETTINGS_POLL_INTERVAL_MS);
     });
@@ -399,6 +444,9 @@ export function startWssClient(state: SharedState): WssClient {
         state.runtimeSettings.lastAttemptedAt = Date.now();
         ws.send(JSON.stringify({ type: "SETTINGS_REQUEST" }));
         sendDaemonHeartbeat(ws);
+        // E.8a (doc 88): flush the local notification disk queue now that the link
+        // is up (store-and-forward — anything detected while offline goes out here).
+        void flushNotificationQueue(ws);
         // Kick off initial sync. Use a fresh abort handle so any in-flight
         // sync from a stale earlier connection stops emitting.
         activeSyncAbort.stopped = true;
@@ -407,6 +455,17 @@ export function startWssClient(state: SharedState): WssClient {
         return;
       }
       if (msg?.type === "PONG") {
+        return;
+      }
+      if (msg?.type === "USER_NOTIFICATION_ACK") {
+        // E.8a (doc 88): the gateway durably accepted this notification (wrote the
+        // outbox row) — clear it from the local disk queue. A missing/lost ack just
+        // means we re-flush next tick (idempotent via bridgeEventId).
+        const ackId =
+          typeof (msg as { bridgeEventId?: unknown }).bridgeEventId === "string"
+            ? (msg as { bridgeEventId: string }).bridgeEventId
+            : "";
+        if (ackId) void removeBridgeNotification(state.config.stateDir, ackId);
         return;
       }
       // INDEX_BATCH_ACK / INDEX_BATCH_ERR — gateway confirmations for each
@@ -1600,6 +1659,20 @@ async function resolveAndReportSourceRoots(
     const inputs = parseSourceRootsFromSettings(rawSourceRoots);
     const resolved = await resolveSourceRoots(inputs);
     state.sourceRoots = resolved;
+    // E.8a (doc 88): EDGE-detect "all configured content roots unreadable" and queue
+    // ONE bridge_media_root_unreadable alert (the disk queue store-and-forwards it to
+    // the gateway). Edge-flag prevents re-alerting every settings tick; cleared once
+    // a root becomes active again so a later outage re-alerts.
+    const allRootsUnreadable =
+      resolved.length > 0 && !resolved.some((r) => r.status === "active");
+    if (allRootsUnreadable && !mediaRootUnreadableNotified) {
+      mediaRootUnreadableNotified = true;
+      void enqueueBridgeNotification(state.config.stateDir, "bridge_media_root_unreadable").catch(
+        () => {},
+      );
+    } else if (!allRootsUnreadable && mediaRootUnreadableNotified) {
+      mediaRootUnreadableNotified = false;
+    }
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
@@ -1666,6 +1739,7 @@ async function handleCreateProject(
   // boundary means an unmounted/unbound template simply won't resolve.
   const useTemplate = msg.useTemplate !== false;
   let templateContainerPath: string | null = null;
+  let useDefaultStructure = false;
   if (useTemplate) {
     const templateHostPath =
       (typeof msg.templatePath === "string" && msg.templatePath.trim()) ||
@@ -1673,17 +1747,15 @@ async function handleCreateProject(
       state.config.defaultTemplatePath ||
       "";
     if (!templateHostPath) {
-      reply({
-        ok: false,
-        reason:
-          "no project template is configured — set a default template on the bridge, or create a plain folder",
-      });
-      return;
-    }
-    templateContainerPath = hostPathToContainerPath(templateHostPath);
-    if (!templateContainerPath) {
-      reply({ ok: false, reason: "configured template path is invalid" });
-      return;
+      // PD77: no template configured → scaffold the bridge's built-in default
+      // structure instead of rejecting. (useTemplate=false still = plain folder.)
+      useDefaultStructure = true;
+    } else {
+      templateContainerPath = hostPathToContainerPath(templateHostPath);
+      if (!templateContainerPath) {
+        reply({ ok: false, reason: "configured template path is invalid" });
+        return;
+      }
     }
   }
 
@@ -1698,6 +1770,7 @@ async function handleCreateProject(
     rootContainerPath: root.containerPath,
     destSubPath: String(msg.destSubPath ?? ""),
     templateContainerPath,
+    useDefaultStructure,
     activeRootContainerPaths,
     recordingDate: String(msg.recordingDate ?? ""),
     workingTitle: String(msg.workingTitle ?? ""),

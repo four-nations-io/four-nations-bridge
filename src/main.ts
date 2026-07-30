@@ -23,6 +23,7 @@ import { emptyRuntimeSettingsState } from './settings/runtime';
 import { emptyThumbStats } from './thumb/orchestrator';
 import { loadPairedState, savePairedState, type PairedState } from './pairing/state';
 import { probePairing } from './pairing/probe';
+import { enqueueBridgeNotification } from './notifications/queue';
 
 /**
  * Probe that the state dir is creatable + writable BEFORE the wizard tries to
@@ -161,22 +162,25 @@ async function main() {
   config.bearer = effectiveBearer;
   config.deviceLabel = effectiveLabel;
 
-  // V0.9d: effective content encryption key — wizard-persisted key (paired.json)
-  // wins over env, same precedence as the bearer. When neither source has it the
-  // bridge boots into the wizard and collects it there (web-UI-first onboarding).
-  // config carries the resolved value so the thumb orchestrator (which only runs
-  // after pairing) always sees a real key.
-  const effectiveEncryptionKey = pairedState?.encryptionKeyHex || config.encryptionKeyHex;
+  // doc 118 Part B: the content encryption key (CEK) is the PER-TENANT key the gateway
+  // delivered in the pairing HELLO_ACK and the bridge persisted in paired.json — never
+  // pasted, never from env. config carries the resolved value so the thumb orchestrator
+  // (which only runs after pairing) sees the tenant CEK.
+  const effectiveEncryptionKey = pairedState?.encryptionKeyHex || '';
   config.encryptionKeyHex = effectiveEncryptionKey;
 
   const paired = effectiveBearer.length > 0 && effectiveLabel.length > 0;
   if (paired && effectiveEncryptionKey === '') {
     // eslint-disable-next-line no-console
     console.warn(
-      'bridge: paired but NO content encryption key (neither env nor paired.json). ' +
-        'Thumbnails/previews cannot be encrypted — re-pair via the setup wizard to enter the key, ' +
-        'or set CONTENT_BRIDGE_ENCRYPTION_KEY.'
+      'bridge: paired but NO content encryption key in paired.json. Thumbnails/previews ' +
+        'cannot be encrypted — re-pair via the setup wizard so the gateway re-delivers the ' +
+        'tenant content key.'
     );
+    // E.8a (doc 88): queue a durable bridge_needs_repair alert so the creator gets a
+    // push/feed nudge (delivered by the gateway→outbox path on the next connect), not
+    // just this docker-log line. Coalesced + idempotent in the disk queue.
+    void enqueueBridgeNotification(config.stateDir, 'bridge_needs_repair').catch(() => {});
   }
 
   // eslint-disable-next-line no-console
@@ -321,9 +325,9 @@ async function main() {
           bearer: result.deviceBearer ?? pairingCode,
           deviceKey,
           deviceLabel: label,
-          // Headless auto-pair takes the key from env (it has no wizard); persist
-          // it so paired.json is self-contained.
-          encryptionKeyHex: config.encryptionKeyHex || undefined,
+          // doc 118 Part B: persist the per-tenant CEK the gateway sealed into this
+          // claim's HELLO_ACK — headless auto-pair gets it the same way the wizard does.
+          encryptionKeyHex: result.contentCekHex ?? undefined,
           initialSourceRootHostPath: initialRoot,
           pairedAt: Date.now(),
         };

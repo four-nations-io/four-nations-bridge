@@ -45,9 +45,8 @@ RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit
 
 COPY --from=builder /app/dist ./dist
 
-# Run as non-root, with a fixed default UID 1031 / GID 100. Override at runtime
-# (compose `user:` or the install scripts) to match the user that owns your
-# content, so the read-only content mount is readable.
+# Run as non-root. UID 1031 / GID 100 matches four-nations-next for any
+# future shared bind-mounts on the operator's NAS.
 USER 1031:100
 
 ENV NODE_ENV=production

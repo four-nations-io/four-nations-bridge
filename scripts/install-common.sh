@@ -65,9 +65,6 @@ bridge_require_docker() {
 #   FN_SAAS_WSS_URL   — the bridge gateway WSS endpoint
 #   FN_PAIRING_CODE   — pairing code from the account (optional here; the wizard
 #                       accepts a manual paste too)
-#   FN_ENC_KEY        — 64-hex shared content encryption key from the install
-#                       instructions (V0 stub key; a future release derives this
-#                       at pair time and drops the prompt)
 #   FN_DEVICE_LABEL   — bridge display name (defaults to this machine's hostname)
 #   FN_AUTO_PAIR      — "true"/"false": pair headlessly on boot (no browser)
 #   FN_LAN            — "true"/"false": expose the setup UI on the LAN (token-gated)
@@ -147,16 +144,6 @@ bridge_prompt_config() {
   bridge_note "sign in on can then browse your content). Paste it now to pre-fill the"
   bridge_note "setup wizard, or leave blank and paste it in the wizard instead."
   read -r -s -p "  Pairing code (hidden; optional): " FN_PAIRING_CODE; echo
-
-  bridge_note ""
-  bridge_note "Your install instructions also include a content encryption key (64 hex"
-  bridge_note "characters). Thumbnails + previews are encrypted with it before leaving"
-  bridge_note "this machine."
-  read -r -s -p "  Content encryption key (hidden): " FN_ENC_KEY; echo
-  case "$FN_ENC_KEY" in
-    *[!0-9a-fA-F]*) bridge_die "Encryption key must be hex characters only." ;;
-  esac
-  [ "${#FN_ENC_KEY}" -eq 64 ] || bridge_die "Encryption key must be exactly 64 hex characters."
 
   # ── Bridge name (defaults to this machine's hostname) ─────────────────────
   # Used as the display name in the account's bridge list, and — for headless
@@ -305,10 +292,6 @@ CONTENT_BRIDGE_APP_URL=${FN_APP_URL:-}
 # only a convenience prefill and is redundant once paired.json exists, so you
 # may blank it (and re-run 'docker compose up -d') after pairing completes.
 CONTENT_BRIDGE_PAIRING_CODE=${FN_PAIRING_CODE}
-
-# Content encryption key (64 hex chars) — thumbnails + previews are encrypted
-# with this before leaving this machine.
-CONTENT_BRIDGE_ENCRYPTION_KEY=${FN_ENC_KEY}
 
 # Informational platform tag shown in your account's bridge list.
 CONTENT_BRIDGE_DEVICE_PLATFORM=${FN_DEVICE_PLATFORM:-linux}

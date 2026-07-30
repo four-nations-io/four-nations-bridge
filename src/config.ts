@@ -64,14 +64,14 @@ const ConfigSchema = z.object({
         'CONTENT_BRIDGE_DEVICE_LABEL must be 1-64 chars: alphanumeric start, then alphanumerics/space/_/./-',
     }),
   sourceRoot: z.string().min(1),
-  // V0.9d: optional at boot. Empty is allowed so a creator can enter the key in
-  // the setup wizard instead of the .env (web-UI-first onboarding). When empty,
-  // main.ts falls back to the wizard-persisted key from paired.json; if neither
-  // source has it the bridge boots into the wizard and collects it. Still must be
-  // well-formed (64 hex) when set in env.
+  // doc 118 Part B: the content-encryption key (CEK) is NO LONGER pasted or read from
+  // env — it is a PER-TENANT key the gateway delivers in the pairing HELLO_ACK and the
+  // bridge persists in paired.json. This field is the in-memory RUNTIME carrier only:
+  // it always loads as '' (see loadConfig) and main.ts populates it from paired.json's
+  // gateway-delivered CEK; thumb encryption reads config.encryptionKeyHex. Kept as ''
+  // or 64 hex.
   encryptionKeyHex: z.string().refine((s) => s === '' || /^[0-9a-fA-F]{64}$/.test(s), {
-    message:
-      'CONTENT_BRIDGE_ENCRYPTION_KEY must be empty (then entered in the setup wizard) or exactly 64 hex chars (32 bytes)',
+    message: 'content encryption key must be empty (pre-pairing) or exactly 64 hex chars (32 bytes)',
   }),
 
   // V0.3 thumb config
@@ -260,7 +260,9 @@ export function loadConfig(): BridgeConfig {
     // SAME host directory as the old /sources/local, so rel_paths are byte-
     // identical (no re-index). CONTENT_BRIDGE_SOURCE_ROOT is no longer read.
     sourceRoot: hostPathToContainerPath(process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '') ?? '',
-    encryptionKeyHex: process.env.CONTENT_BRIDGE_ENCRYPTION_KEY ?? '',
+    // doc 118 Part B: never from env — the CEK arrives via the gateway HELLO_ACK and is
+    // loaded from paired.json in main.ts. Always '' at config load.
+    encryptionKeyHex: '',
     thumbWritableRoot: process.env.CONTENT_BRIDGE_THUMB_WRITABLE_ROOT ?? '/writable/source',
     hostContentPath: process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '',
     thumbSubpathWithinProject: process.env.CONTENT_BRIDGE_THUMB_SUBPATH_WITHIN_PROJECT ?? 'Pics/Bridge Thumbnails',

@@ -1,10 +1,11 @@
 // AES-256-GCM helpers — Phase F V0.3.
 //
-// V0 uses a single shared stub key from the CONTENT_BRIDGE_ENCRYPTION_KEY
-// env var. Same key on bridge (encrypt) + browser (decrypt). V1.2 swaps to
-// per-tenant CEK derived from the user's password via Argon2id in the
-// browser — at that point this module's API stays the same but the key
-// source changes (loaded from OS keychain post-pair-time).
+// doc 118 Part B: the key is the PER-TENANT content-encryption key (CEK) the gateway
+// delivers in the pairing HELLO_ACK and the bridge persists in paired.json — the same
+// key the tenant's browser fetches from GET /api/bridge/content-key (encrypt on the
+// bridge, decrypt in the browser). This module takes the key as a hex arg (see
+// encryptAesGcm's keyHex param); the caller passes config.encryptionKeyHex, which
+// main.ts populates from paired.json. (Replaces the V0 single global stub key.)
 //
 // Frame on the wire carries `{ nonce, ciphertext }` where ciphertext
 // includes the 16-byte GCM auth tag concatenated at the end (Node's standard

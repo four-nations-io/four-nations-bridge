@@ -97,49 +97,55 @@
     statusView: $('status-view'),
     subtitle: $('page-subtitle'),
     stepInds: [$('step-ind-1'), $('step-ind-2'), $('step-ind-3')],
-    panels: [$('wizard-step-1'), $('wizard-step-2'), $('wizard-step-3'), $('wizard-step-4')],
+    panels: [$('wizard-step-1'), $('wizard-step-2'), $('wizard-step-3')],
+    // Step 1 — enter the pairing code (the one key).
     pairingCode: $('pairing-code'),
-    encKeyField: $('enc-key-field'),
-    encryptionKey: $('encryption-key'),
-    deviceLabel: $('device-label'),
     pairError: $('pair-error'),
     pairSubmit: $('pair-submit'),
     pairBusy: $('pair-busy'),
-    rootPath: $('root-path'),
-    rootSuggestions: $('root-suggestions'),
-    rootSuggestionList: $('root-suggestion-list'),
-    rootError: $('root-error'),
-    rootSubmit: $('root-submit'),
-    rootBusy: $('root-busy'),
+    // Step 2 — confirm settings + folder permission checks.
+    settingsLabel: $('settings-label'),
+    settingsRoot: $('settings-root'),
     contentStatus: $('content-status'),
     managedPath: $('managed-path'),
     managedStatus: $('managed-status'),
-    rootBack: $('root-back'),
+    rootSuggestions: $('root-suggestions'),
+    rootSuggestionList: $('root-suggestion-list'),
     permRemediation: $('perm-remediation'),
     copyPrompt: $('copy-prompt'),
     copyPromptDone: $('copy-prompt-done'),
     remediationRunAs: $('remediation-runas'),
-    confirmLabel: $('confirm-label'),
-    confirmRoot: $('confirm-root'),
-    confirmManaged: $('confirm-managed'),
-    confirmSaas: $('confirm-saas'),
-    confirmError: $('confirm-error'),
-    confirmSubmit: $('confirm-submit'),
-    confirmBack: $('confirm-back'),
-    confirmBusy: $('confirm-busy'),
-    doneBrowseWrap: $('done-browse-wrap'),
-    doneBrowseLink: $('done-browse-link'),
+    rootError: $('root-error'),
+    rootBusy: $('root-busy'),
+    confirmSettings: $('confirm-settings'),
+    settingsRecheck: $('settings-recheck'),
+    // Step 3 — live setup confirmation.
+    verifyDot: $('verify-dot'),
+    verifyLabel: $('verify-label'),
+    verifyDetail: $('verify-detail'),
+    verifyError: $('verify-error'),
+    verifyActions: $('verify-actions'),
+    verifyRetry: $('verify-retry'),
+    verifyBrowseWrap: $('verify-browse-wrap'),
+    verifyBrowseLink: $('verify-browse-link'),
+    verifyDoneNote: $('verify-done-note'),
+    verifySvgPending: $('verify-svg-pending'),
+    verifySvgOk: $('verify-svg-ok'),
+    verifySvgErr: $('verify-svg-err'),
   };
 
   const wizardData = {
     label: '',
     rootPath: '',
-    saasUrl: '',
     hasPrefill: false,
-    needsEncryptionKey: false,
     managedHostPath: '',
     appUrl: '',
   };
+
+  // Step-3 live-verification poll handles (IIFE-scoped so the verify helpers below
+  // can clear/restart them independently of initWizard).
+  let verifyTimer = null;
+  let verifyDeadline = 0;
 
   // Render a ✓/✗ folder-permission result line.
   function setFolderStatus(el, ok, message) {
@@ -238,56 +244,48 @@
   }
 
   async function initWizard(setupState) {
-    if (wiz.subtitle) wiz.subtitle.textContent = 'Phase F · V0.8 · setup';
+    if (wiz.subtitle) wiz.subtitle.textContent = 'Setup';
     wiz.root.hidden = false;
     wiz.statusView.hidden = true;
     showWizardStep(1);
 
-    wizardData.saasUrl = setupState.saasUrl || '';
     wizardData.appUrl = setupState.appUrl || '';
-    // The install may have provided a pairing code (server-side prefill). We
-    // never receive the code itself — only a flag — so hint that leaving the
-    // field blank uses it, and allow an empty submit when it's present.
+    // doc 118 Part A: the bridge name + content folder come from bridge.env; the wizard
+    // confirms them on Step 2 rather than asking for them on Step 1.
+    wizardData.label = setupState.deviceLabel || '';
+    wizardData.rootPath = setupState.defaultRootSuggestion || '';
+    wizardData.managedHostPath = setupState.managedHostPath || '';
+    // The install may have provided a pairing code (server-side prefill). We never receive
+    // the code itself, only a flag, so hint that leaving the field blank uses it.
     wizardData.hasPrefill = !!setupState.hasPrefillPairingCode;
     if (wizardData.hasPrefill && wiz.pairingCode) {
       wiz.pairingCode.placeholder =
-        'Using the pairing code from your install — leave blank, or paste a different one';
-    }
-    // V0.9d: only ask for the content lock key when it wasn't already set during
-    // install (otherwise the field stays hidden and we reuse the configured one).
-    wizardData.needsEncryptionKey = !!setupState.needsEncryptionKey;
-    if (wizardData.needsEncryptionKey && wiz.encKeyField) {
-      wiz.encKeyField.hidden = false;
-    }
-    if (setupState.defaultRootSuggestion && wiz.rootPath) {
-      wiz.rootPath.value = setupState.defaultRootSuggestion;
-    }
-    // V0.9d: pre-fill the bridge name from the .env the container already loaded
-    // (CONTENT_BRIDGE_DEVICE_LABEL) — no re-typing what was entered on the web app.
-    if (setupState.deviceLabel && wiz.deviceLabel && !wiz.deviceLabel.value) {
-      wiz.deviceLabel.value = setupState.deviceLabel;
+        'Using the pairing code from your install (leave blank, or paste a different one)';
     }
 
-    // Bridge working (managed) folder — display its host path + the pre-flighted
-    // read-write status the server reported on load.
-    wizardData.managedHostPath = setupState.managedHostPath || '';
+    // Pre-populate Step 2's read-only confirmations (shown after the code verifies).
+    if (wiz.settingsLabel) wiz.settingsLabel.textContent = wizardData.label || '—';
+    if (wiz.settingsRoot) wiz.settingsRoot.textContent = wizardData.rootPath || '—';
     if (wiz.managedPath) wiz.managedPath.textContent = wizardData.managedHostPath || '—';
+    if (wiz.remediationRunAs && setupState.runAs) wiz.remediationRunAs.textContent = setupState.runAs;
+    // The working folder's read-write status is pre-flighted server-side on load.
     if (wiz.managedStatus && typeof setupState.managedWritable === 'boolean') {
       setFolderStatus(
         wiz.managedStatus,
         setupState.managedWritable,
         setupState.managedWritable
           ? 'Read & write OK'
-          : 'Not writable yet — the bridge can’t save here. Re-check after fixing folder ownership.'
+          : 'Not writable yet. The bridge can’t save here; fix folder access, then re-check.'
       );
     }
-    // If the working folder failed its pre-flight on load, surface the
-    // permission remediation (copy-prompt + fix-perms.sh) up front.
+    // If the working folder failed its pre-flight on load, surface the permission
+    // remediation (copy-prompt + fix-perms.sh) up front.
     if (setupState.setupPrompt) {
       showRemediation(setupState.setupPrompt, setupState.runAs);
     }
 
-    // Folder suggestions from what's actually mounted.
+    // Folder suggestions from what's actually mounted — lets the user switch the content
+    // folder on Step 2 if the env default is wrong.
     try {
       const resp = await fetch('/api/setup/mounts', { cache: 'no-store', headers: authHeaders() });
       if (resp.ok) {
@@ -301,7 +299,9 @@
             btn.className = 'wizard__suggestion';
             btn.textContent = p;
             btn.addEventListener('click', () => {
-              if (wiz.rootPath) wiz.rootPath.value = p;
+              wizardData.rootPath = p;
+              if (wiz.settingsRoot) wiz.settingsRoot.textContent = p;
+              if (wiz.contentStatus) wiz.contentStatus.hidden = true;
             });
             li.appendChild(btn);
             wiz.rootSuggestionList.appendChild(li);
@@ -310,72 +310,64 @@
         }
       }
     } catch {
-      // Suggestions are a convenience — typing the path still works.
+      // Suggestions are a convenience; the env content folder still works.
     }
 
+    // ── Step 1: verify the pairing code (claims + stashes the candidate) ──
     wiz.pairSubmit.addEventListener('click', async () => {
       showError(wiz.pairError, '');
       const pairingCode = (wiz.pairingCode.value || '').trim();
-      const deviceLabel = (wiz.deviceLabel.value || '').trim();
       if (!pairingCode && !wizardData.hasPrefill) {
         showError(wiz.pairError, 'Paste your pairing code first.');
-        return;
-      }
-      if (!deviceLabel) {
-        showError(wiz.pairError, 'Give this bridge a name (e.g. “Studio NAS”).');
-        return;
-      }
-      const encryptionKeyHex = wizardData.needsEncryptionKey
-        ? (wiz.encryptionKey.value || '').trim()
-        : '';
-      if (wizardData.needsEncryptionKey && !/^[0-9a-fA-F]{64}$/.test(encryptionKeyHex)) {
-        showError(
-          wiz.pairError,
-          'Enter your content lock key — the 64-character code (letters a–f and numbers 0–9) from your install instructions.'
-        );
         return;
       }
       wiz.pairSubmit.disabled = true;
       wiz.pairBusy.hidden = false;
       try {
-        const { ok, status, data } = await postJson('/api/setup/pair', {
-          pairingCode,
-          deviceLabel,
-          encryptionKeyHex,
-        });
+        // The bridge name is env-derived server-side; there is no name field here.
+        const { ok, status, data } = await postJson('/api/setup/pair', { pairingCode });
         if (!ok) {
           showError(
             wiz.pairError,
             (data && data.message) ||
               (status === 429
-                ? 'Too many attempts — wait a minute and try again.'
+                ? 'Too many attempts. Wait a minute and try again.'
                 : 'Pairing failed. Try again.')
           );
           return;
         }
-        wizardData.label = deviceLabel;
+        if (wiz.settingsLabel && data && data.deviceLabel) {
+          wizardData.label = data.deviceLabel;
+          wiz.settingsLabel.textContent = data.deviceLabel;
+        }
         showWizardStep(2);
+        // Kick off the folder pre-flight so Step 2 shows read/write status immediately.
+        void checkFolders(false);
       } catch (err) {
-        showError(wiz.pairError, 'Setup UI unreachable — is the bridge container running?');
+        showError(wiz.pairError, 'Setup page unreachable. Is the bridge container running?');
       } finally {
         wiz.pairSubmit.disabled = false;
         wiz.pairBusy.hidden = true;
       }
     });
 
-    wiz.rootSubmit.addEventListener('click', async () => {
+    // ── Step 2: folder permission check (shared by Confirm + Re-check) ──
+    async function checkFolders(alsoComplete) {
       showError(wiz.rootError, '');
-      const hostPath = (wiz.rootPath.value || '').trim();
+      const hostPath = (wizardData.rootPath || '').trim();
       if (!hostPath) {
-        showError(wiz.rootError, 'Enter the folder path you chose during install.');
-        return;
+        showError(
+          wiz.rootError,
+          'No content folder is set. Choose one from the list, or re-run the installer.'
+        );
+        return false;
       }
-      wiz.rootSubmit.disabled = true;
       wiz.rootBusy.hidden = false;
+      wiz.confirmSettings.disabled = true;
+      wiz.settingsRecheck.disabled = true;
       try {
         const { ok, data } = await postJson('/api/setup/validate-root', { hostPath });
-        // Both the 200 and 422 responses carry per-folder { content, managed }
-        // results, so render the status lines either way.
+        // Both the 200 and 422 responses carry per-folder { content, managed } results.
         const content = (data && data.content) || null;
         const managed = (data && data.managed) || null;
         if (content && wiz.contentStatus) {
@@ -397,34 +389,46 @@
         }
         if (!ok) {
           showRemediation(data && data.setupPrompt, data && data.runAs);
-          const msg =
+          showError(
+            wiz.rootError,
             (content && !content.readable && content.message) ||
-            (managed && !managed.writable && managed.message) ||
-            'Folder check failed — see the details above.';
-          showError(wiz.rootError, msg);
-          return;
+              (managed && !managed.writable && managed.message) ||
+              'Folder check failed. See the details above.'
+          );
+          return false;
         }
         hideRemediation();
-        wizardData.rootPath = (content && content.hostPath) || hostPath;
-        wiz.confirmLabel.textContent = wizardData.label || '—';
-        wiz.confirmRoot.textContent = wizardData.rootPath || '—';
-        if (wiz.confirmManaged) {
-          wiz.confirmManaged.textContent =
-            (managed && managed.hostPath) || wizardData.managedHostPath || '—';
+        if (content && content.hostPath) {
+          wizardData.rootPath = content.hostPath;
+          if (wiz.settingsRoot) wiz.settingsRoot.textContent = content.hostPath;
         }
-        wiz.confirmSaas.textContent = wizardData.saasUrl || '—';
-        showWizardStep(3);
+        if (alsoComplete) return await completeSetup();
+        return true;
       } catch (err) {
-        showError(wiz.rootError, 'Setup UI unreachable — is the bridge container running?');
+        showError(wiz.rootError, 'Setup page unreachable. Is the bridge container running?');
+        return false;
       } finally {
-        wiz.rootSubmit.disabled = false;
         wiz.rootBusy.hidden = true;
+        wiz.confirmSettings.disabled = false;
+        wiz.settingsRecheck.disabled = false;
       }
-    });
-
-    if (wiz.rootBack) {
-      wiz.rootBack.addEventListener('click', () => showWizardStep(1));
     }
+
+    async function completeSetup() {
+      const { ok, data } = await postJson('/api/setup/complete', {});
+      if (!ok) {
+        showError(wiz.rootError, (data && data.message) || 'Couldn’t finish setup.');
+        return false;
+      }
+      showWizardStep(3);
+      wiz.stepInds.forEach((ind) => ind && ind.classList.add('wizard__step--done'));
+      startVerify();
+      return true;
+    }
+
+    wiz.confirmSettings.addEventListener('click', () => void checkFolders(true));
+    wiz.settingsRecheck.addEventListener('click', () => void checkFolders(false));
+
     if (wiz.copyPrompt) {
       wiz.copyPrompt.addEventListener('click', async () => {
         if (!lastSetupPrompt) return;
@@ -437,38 +441,110 @@
         } else if (!ok) {
           showError(
             wiz.rootError,
-            'Couldn’t copy automatically — the same prompt is saved in your install folder as setup-account-prompt.txt.'
+            'Couldn’t copy automatically. The same prompt is saved in your install folder as setup-account-prompt.txt.'
           );
         }
       });
     }
 
-    wiz.confirmBack.addEventListener('click', () => showWizardStep(2));
+    if (wiz.verifyRetry) wiz.verifyRetry.addEventListener('click', () => startVerify());
+  }
 
-    wiz.confirmSubmit.addEventListener('click', async () => {
-      showError(wiz.confirmError, '');
-      wiz.confirmSubmit.disabled = true;
-      wiz.confirmBusy.hidden = false;
-      try {
-        const { ok, data } = await postJson('/api/setup/complete', {});
-        if (!ok) {
-          showError(wiz.confirmError, (data && data.message) || 'Couldn’t finish setup.');
-          return;
-        }
-        showWizardStep(4);
-        wiz.stepInds.forEach((ind) => ind && ind.classList.add('wizard__step--done'));
-        // Reveal the "browse your content" link when the web app URL is set.
-        if (wizardData.appUrl && wiz.doneBrowseLink && wiz.doneBrowseWrap) {
-          wiz.doneBrowseLink.href = wizardData.appUrl + '/content/bridge';
-          wiz.doneBrowseWrap.hidden = false;
-        }
-      } catch (err) {
-        showError(wiz.confirmError, 'Setup UI unreachable — is the bridge container running?');
-      } finally {
-        wiz.confirmSubmit.disabled = false;
-        wiz.confirmBusy.hidden = true;
+  // ── Step 3: actively verify the bridge reached the account (poll /api/status) ──
+  function setVerifySvg(which) {
+    if (wiz.verifySvgPending) wiz.verifySvgPending.hidden = which !== 'pending';
+    if (wiz.verifySvgOk) wiz.verifySvgOk.hidden = which !== 'ok';
+    if (wiz.verifySvgErr) wiz.verifySvgErr.hidden = which !== 'err';
+  }
+  function setVerifyDot(cls) {
+    if (!wiz.verifyDot) return;
+    wiz.verifyDot.classList.remove('dot--ok', 'dot--warn', 'dot--err', 'dot--unknown');
+    wiz.verifyDot.classList.add('dot--' + cls);
+  }
+
+  const VERIFY_TIMEOUT_MS = 30000;
+  function startVerify() {
+    if (verifyTimer) clearInterval(verifyTimer);
+    verifyDeadline = Date.now() + VERIFY_TIMEOUT_MS;
+    setVerifySvg('pending');
+    setVerifyDot('warn');
+    if (wiz.verifyActions) wiz.verifyActions.hidden = true;
+    if (wiz.verifyBrowseWrap) wiz.verifyBrowseWrap.hidden = true;
+    if (wiz.verifyDoneNote) wiz.verifyDoneNote.hidden = true;
+    showError(wiz.verifyError, '');
+    if (wiz.verifyLabel) wiz.verifyLabel.textContent = 'Connecting to your account...';
+    if (wiz.verifyDetail) {
+      wiz.verifyDetail.hidden = false;
+      wiz.verifyDetail.textContent =
+        'We are confirming this bridge can reach your account. This usually takes a few seconds.';
+    }
+    verifyTick();
+    verifyTimer = setInterval(verifyTick, 1500);
+  }
+
+  async function verifyTick() {
+    let data = null;
+    try {
+      const resp = await fetch('/api/status', { cache: 'no-store', headers: authHeaders() });
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      data = await resp.json();
+    } catch (err) {
+      // The setup page itself is unreachable; keep waiting until the deadline.
+      if (Date.now() > verifyDeadline) {
+        verifyFailed('The setup page lost contact with the bridge. Is the container still running?');
       }
-    });
+      return;
+    }
+    if (data.wssStatus === 'connected' && data.helloAckedAt) {
+      verifySucceeded();
+      return;
+    }
+    if (Date.now() > verifyDeadline) {
+      const ev = data.lastWssEvent || {};
+      const detail = ev && ev.detail ? (typeof ev.detail === 'string' ? ev.detail : JSON.stringify(ev.detail)) : '';
+      const base =
+        data.wssStatus === 'reconnecting'
+          ? 'The bridge is still trying to reach your account (' + (data.reconnectAttempts || 0) + ' attempts).'
+          : data.wssStatus === 'stopped'
+            ? 'The bridge connection stopped.'
+            : 'The bridge has not connected yet.';
+      verifyFailed(base + (detail ? ' Last error: ' + detail : ''));
+    }
+  }
+
+  function verifySucceeded() {
+    if (verifyTimer) {
+      clearInterval(verifyTimer);
+      verifyTimer = null;
+    }
+    setVerifySvg('ok');
+    setVerifyDot('ok');
+    if (wiz.verifyLabel) wiz.verifyLabel.textContent = 'Connected. Your content is indexing.';
+    if (wiz.verifyDetail) wiz.verifyDetail.hidden = true;
+    showError(wiz.verifyError, '');
+    if (wiz.verifyActions) wiz.verifyActions.hidden = true;
+    if (wiz.verifyDoneNote) wiz.verifyDoneNote.hidden = false;
+    if (wizardData.appUrl && wiz.verifyBrowseLink && wiz.verifyBrowseWrap) {
+      wiz.verifyBrowseLink.href = wizardData.appUrl + '/content/bridge';
+      wiz.verifyBrowseWrap.hidden = false;
+    }
+  }
+
+  function verifyFailed(message) {
+    if (verifyTimer) {
+      clearInterval(verifyTimer);
+      verifyTimer = null;
+    }
+    setVerifySvg('err');
+    setVerifyDot('err');
+    if (wiz.verifyLabel) wiz.verifyLabel.textContent = 'Not connected yet';
+    if (wiz.verifyDetail) {
+      wiz.verifyDetail.hidden = false;
+      wiz.verifyDetail.textContent =
+        'The pairing is saved. The bridge keeps retrying in the background. You can leave this page open, fix any issue below, and try again.';
+    }
+    showError(wiz.verifyError, message);
+    if (wiz.verifyActions) wiz.verifyActions.hidden = false;
   }
 
   // ── Status view (paired) — the original V0.1+ poller ─────────────────────

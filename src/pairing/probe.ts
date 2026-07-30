@@ -23,7 +23,15 @@ export type ProbeFailureReason =
   | 'protocol'; // connected but the exchange didn't complete cleanly
 
 export type ProbeResult =
-  | { ok: true; deviceId: number | null; deviceBearer: string | null }
+  | {
+      ok: true;
+      deviceId: number | null;
+      deviceBearer: string | null;
+      // doc 118 Part B: the tenant's content-encryption key (64 hex), delivered by the
+      // gateway in the HELLO_ACK on a fresh claim. null if the gateway didn't send one
+      // (shouldn't happen for a real claim — the caller then has no key to persist).
+      contentCekHex: string | null;
+    }
   | { ok: false; reason: ProbeFailureReason; detail: string };
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -102,6 +110,7 @@ export function probePairing(params: {
           type?: string;
           deviceId?: number;
           deviceBearer?: string;
+          contentCekHex?: string;
         };
         if (msg?.type === 'HELLO_ACK') {
           finish({
@@ -111,6 +120,11 @@ export function probePairing(params: {
             // gateway didn't issue one (e.g. a shared bearer pasted into the code
             // field) — the caller then falls back to persisting the submitted code.
             deviceBearer: typeof msg.deviceBearer === 'string' ? msg.deviceBearer : null,
+            // doc 118 Part B: the tenant CEK sealed into the HELLO_ACK on this claim.
+            contentCekHex:
+              typeof msg.contentCekHex === 'string' && /^[0-9a-fA-F]{64}$/.test(msg.contentCekHex)
+                ? msg.contentCekHex
+                : null,
           });
         }
       } catch {

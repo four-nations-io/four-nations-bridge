@@ -26,6 +26,7 @@
 
 import { existsSync, promises as fsp, constants as fsConstants } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { hostname } from 'node:os';
 import { randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import type { SharedState } from '../wss-client';
@@ -84,6 +85,20 @@ async function checkAccess(p: string, mode: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** doc 118 Part A: the bridge's display name now comes from bridge.env
+ *  (CONTENT_BRIDGE_DEVICE_LABEL), not a wizard field (Step 1 is the pairing code
+ *  only). Return the configured label when it is well-formed, else a sanitized
+ *  hostname fallback, so a claim always carries a valid name (DEVICE_LABEL_REGEX). */
+function effectiveDeviceLabel(raw: string): string {
+  const t = (raw ?? '').trim();
+  if (DEVICE_LABEL_REGEX.test(t)) return t;
+  const h = (hostname() || 'bridge')
+    .replace(/[^A-Za-z0-9 _.-]/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .slice(0, 64);
+  return h || 'bridge';
 }
 
 /**
@@ -477,14 +492,12 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
       // (POST /api/setup/pair below), so the convenience survives without
       // serving the credential over the localhost socket to other local uids.
       hasPrefillPairingCode: state.config.pairingCodePrefill.length > 0,
-      // V0.9d: whether the wizard must collect the content encryption key (not in
-      // env / paired.json yet). When true the wizard shows the encryption-key field
-      // on step 1; when false it's already configured and the field stays hidden.
-      needsEncryptionKey: state.config.encryptionKeyHex === '',
-      // V0.9d: pre-fill the wizard's bridge-name field from the .env the container
-      // already loaded (CONTENT_BRIDGE_DEVICE_LABEL) — no re-typing what was entered
-      // on the web app's Install Bridge page. Empty when not set in the .env.
-      deviceLabel: state.config.deviceLabel,
+      // doc 118 Part B: the content encryption key is NO LONGER collected in the wizard —
+      // it's a per-tenant key the gateway delivers in the pairing HELLO_ACK. The wizard
+      // asks for the pairing code and nothing else. (needsEncryptionKey removed.)
+      // doc 118 Part A: the bridge name comes from bridge.env (or a hostname fallback),
+      // shown read-only on Step 2 for confirmation. Not a Step-1 field any more.
+      deviceLabel: effectiveDeviceLabel(state.config.deviceLabel),
       defaultRootSuggestion: state.config.hostContentPath || '',
       // Web-app base URL for the success-screen "browse your content" link.
       appUrl: state.config.appUrl,
@@ -529,7 +542,11 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
     // resolved server-side (it's never sent to the browser; see
     // /api/setup/state). A pasted code always overrides the prefill.
     const code = submitted || state.config.pairingCodePrefill;
-    const label = typeof req.body?.deviceLabel === 'string' ? req.body.deviceLabel.trim() : '';
+    // doc 118 Part A: the name is env-derived (or a hostname fallback), not typed in the
+    // wizard. Accept a submitted value if present, else the configured label; effectiveDeviceLabel
+    // guarantees a valid DEVICE_LABEL_REGEX result so the claim always has a name.
+    const submittedLabel = typeof req.body?.deviceLabel === 'string' ? req.body.deviceLabel : '';
+    const label = effectiveDeviceLabel(submittedLabel || state.config.deviceLabel);
     if (code.length < 32) {
       return res.status(400).json({
         error: 'bad-pairing-code',
@@ -544,21 +561,8 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
       });
     }
 
-    // V0.9d: collect the content encryption key here when it isn't already
-    // configured (env or a prior pairing). When it IS configured, reuse it and
-    // ignore any submitted value. Validated 64-hex (server-side; the wizard also
-    // checks client-side). Stored in paired.json on /complete — never logged.
-    const needsKey = state.config.encryptionKeyHex === '';
-    const submittedKey =
-      typeof req.body?.encryptionKeyHex === 'string' ? req.body.encryptionKeyHex.trim() : '';
-    if (needsKey && !/^[0-9a-fA-F]{64}$/.test(submittedKey)) {
-      return res.status(400).json({
-        error: 'bad-encryption-key',
-        message:
-          'Enter your content encryption key — the 64-character code (letters a–f and numbers 0–9) from your install instructions.',
-      });
-    }
-    const encryptionKeyHex = needsKey ? submittedKey : state.config.encryptionKeyHex;
+    // doc 118 Part B: the content encryption key is NOT collected here any more — the
+    // gateway delivers this tenant's CEK in the claim's HELLO_ACK (probe result below).
 
     pairInFlight = true;
     try {
@@ -602,13 +606,16 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
         // value only if the gateway didn't issue one (e.g. a legacy shared bearer
         // pasted into the code field).
         issuedBearer: result.deviceBearer ?? code,
-        encryptionKeyHex,
+        // doc 118 Part B: the per-tenant CEK the gateway sealed into this claim's
+        // HELLO_ACK ('' if none was delivered — the boot warning then surfaces it).
+        encryptionKeyHex: result.contentCekHex ?? '',
         label,
         deviceId: result.deviceId,
       };
       // eslint-disable-next-line no-console
       console.log(`bridge: pairing claimed for "${label}" (deviceId=${result.deviceId})`);
-      return res.json({ ok: true, deviceId: result.deviceId });
+      // Return the effective (env-derived) label so Step 2 confirms exactly what was claimed.
+      return res.json({ ok: true, deviceId: result.deviceId, deviceLabel: label });
     } finally {
       pairInFlight = false;
     }
@@ -735,8 +742,8 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
       // a later rebuild/rename at the same managed path re-attaches to it.
       deviceKey: wizard.candidate.deviceKey,
       deviceLabel: wizard.candidate.label,
-      // V0.9d: the content encryption key (wizard-entered, or the existing env key
-      // when one was already configured). Persisted owner-only in paired.json.
+      // doc 118 Part B: the per-tenant content encryption key the gateway delivered in
+      // the pairing HELLO_ACK. Persisted owner-only (0600) in paired.json.
       encryptionKeyHex: wizard.candidate.encryptionKeyHex,
       initialSourceRootHostPath: wizard.chosenRoot.hostPath,
       pairedAt: Date.now(),
