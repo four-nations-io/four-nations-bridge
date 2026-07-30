@@ -1,6 +1,6 @@
 {
   "name": "four-nations-bridge",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Cross-platform content bridge for four-nations-web SaaS (Phase F per planning doc 46). Runs as a Docker container on the creator's NAS / Mac / PC; pushes file metadata + encrypted thumbs + encrypted byte-range previews to the SaaS over outbound WSS.",
   "private": true,
   "main": "dist/main.js",
