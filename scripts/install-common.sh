@@ -27,7 +27,7 @@ set -euo pipefail
 # re-pulling) and stays cosign-verifiable. Override FN_BRIDGE_IMAGE_TAG to install
 # a different release. ⚠️ Bump this in the SAME change set as any new release, in
 # step with next-app/public/install/docker-compose.yml.
-FN_BRIDGE_IMAGE_TAG="${FN_BRIDGE_IMAGE_TAG:-1.3.1}"
+FN_BRIDGE_IMAGE_TAG="${FN_BRIDGE_IMAGE_TAG:-1.3.2}"
 FN_BRIDGE_IMAGE="${FN_BRIDGE_IMAGE:-ghcr.io/four-nations-io/four-nations-bridge:${FN_BRIDGE_IMAGE_TAG}}"
 
 # Setup wizard port on the creator's machine (always bound to 127.0.0.1).

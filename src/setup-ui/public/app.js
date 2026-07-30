@@ -613,6 +613,20 @@
     if (el) el.textContent = value;
   }
 
+  /** Human name for the reported platform. The daemon stores Node's tag
+   *  (darwin/win32/linux), which means nothing to the creator who owns the
+   *  machine. Mirrors bridgePlatformLabel in the web app — keep the two in step.
+   *  NB a Synology NAS genuinely reports `linux`, so it reads "Linux" here. */
+  function platformLabel(raw) {
+    const v = String(raw || '').trim().toLowerCase();
+    if (!v) return '—';
+    if (v === 'darwin' || v === 'mac' || v === 'macos') return 'Mac';
+    if (v === 'win32' || v === 'windows') return 'Windows';
+    if (v === 'synology') return 'Synology NAS';
+    if (v === 'linux') return 'Linux';
+    return String(raw);
+  }
+
   // Platform reported by /api/status (darwin | win32 | linux). Drives whether the
   // Security section offers the dedicated-user story at all.
   let lastDevicePlatform = '';
@@ -660,7 +674,7 @@
     wireAboutSection(data);
 
     setText(els.deviceLabel, data.deviceLabel || '—');
-    setText(els.devicePlatform, data.devicePlatform || '—');
+    setText(els.devicePlatform, platformLabel(data.devicePlatform));
     setText(els.saasUrl, data.saasUrl || '—');
     setText(els.sourceRoot, data.sourceRoot || '—');
     setText(els.appVersion, data.appVersion || '—');
