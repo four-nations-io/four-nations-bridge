@@ -33,7 +33,7 @@ import type { SharedState } from '../wss-client';
 import { DEVICE_LABEL_REGEX } from '../config';
 import { probePairing } from '../pairing/probe';
 import { savePairedState, type PairedState } from '../pairing/state';
-import { resolveSourceRoot, SOURCE_HOST_PREFIX } from '../source-roots/resolve';
+import { normalizeHostPath, resolveSourceRoot, SOURCE_HOST_PREFIX } from '../source-roots/resolve';
 
 const PUBLIC_DIR_CANDIDATES = [
   join(__dirname, 'public'),       // dist/setup-ui/public (production)
@@ -627,10 +627,18 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
   // state, thumbnails and previews). The managed folder is fixed by the install
   // mount — we only verify it. Both checks must pass before /complete.
   app.post('/api/setup/validate-root', requireUnpaired, async (req, res) => {
+    // doc 119: canonicalize rather than hand-trimming. The old `.replace(/\/+$/, '')`
+    // only knew about forward slashes, so a Windows path could arrive in a spelling
+    // that never equals `config.hostContentPath` below — the confirm step would then
+    // report the creator's own configured folder as unreachable.
     const hostPath =
-      typeof req.body?.hostPath === 'string' ? req.body.hostPath.trim().replace(/\/+$/, '') : '';
+      normalizeHostPath(typeof req.body?.hostPath === 'string' ? req.body.hostPath : '') ?? '';
     if (!hostPath) {
-      return res.status(400).json({ error: 'bad-host-path', message: 'Enter a folder path.' });
+      return res.status(400).json({
+        error: 'bad-host-path',
+        message:
+          'Enter a full folder path, like /volume1/photo/Content or C:/Users/you/Videos.',
+      });
     }
 
     const resolved = await resolveSourceRoot({ id: 0, hostPath, enabled: true, isManaged: false });
@@ -697,6 +705,12 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
   // Step 2 helper — enumerate what's actually mounted under /sources/host so
   // the wizard can suggest candidates instead of making the creator re-type
   // the path they already gave the install script.
+  //
+  // ⚠️ CURRENTLY HAS NO CALLER (doc 117 removed the suggestion list — the confirm
+  // step is env-derived). Before reviving it, note that the un-mirroring below is
+  // POSIX-only: a Windows mirror `/sources/host/c/Users/…` slices back to
+  // `/c/Users/…`, which is not a host path Windows or Docker would accept. It needs
+  // the inverse of doc 119's drive-letter fold (`/c/…` → `C:/…`) first.
   app.get('/api/setup/mounts', requireUnpaired, async (_req, res) => {
     let mounts: string[] = [];
     try {

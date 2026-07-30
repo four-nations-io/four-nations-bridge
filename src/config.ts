@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { hostPathToContainerPath } from './source-roots/resolve';
+import { hostPathToContainerPath, normalizeHostPath } from './source-roots/resolve';
 
 // Phase F content-bridge env contract. Validated at boot via `loadConfig()`;
 // throws on missing-or-malformed required vars so misconfiguration fails fast
@@ -85,8 +85,14 @@ const ConfigSchema = z.object({
     .string()
     .min(1, 'CONTENT_BRIDGE_HOST_CONTENT_PATH is required (absolute host path to your content folder)')
     .refine(
-      (s) => hostPathToContainerPath(s) !== null,
-      'CONTENT_BRIDGE_HOST_CONTENT_PATH must be an absolute path with no ".." segments'
+      // planning doc 119: normalizeHostPath, not hostPathToContainerPath — this value
+      // is the CANONICAL host path (it is sent on HELLO and stored as this device's
+      // source-root `host_path`), so it must satisfy the stricter input rules:
+      // absolute POSIX or Windows drive-letter, no ".." at all, no UNC share.
+      (s) => normalizeHostPath(s) !== null,
+      'CONTENT_BRIDGE_HOST_CONTENT_PATH must be an absolute path with no ".." segments — ' +
+        '/volume1/photo/Content (NAS/Mac/Linux) or C:/Users/you/Videos (Windows). ' +
+        'Network shares (\\\\server\\share) are not supported yet.'
     ),
   /**
    * Sub-path within each project where the bridge writes thumbs. ALWAYS
@@ -247,6 +253,17 @@ export function loadConfig(): BridgeConfig {
     ? positionsRaw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
     : DEFAULT_THUMB_POSITIONS;
 
+  // planning doc 119: canonicalize the content path ONCE, here, so every downstream
+  // consumer sees one spelling. A creator may hand-edit bridge.env (backslashes, a
+  // quoted "Copy as path" value, a trailing slash) and this value is not just local
+  // config — it rides out on HELLO as `initialSourceRootHostPath` and becomes the
+  // device's source-root `host_path`. Two spellings of one folder would create two
+  // root rows and break the gateway's rel-prefix math. Falls back to the raw value so
+  // an unusable path fails the schema refine with a readable message rather than
+  // silently becoming ''.
+  const rawHostContentPath = process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '';
+  const hostContentPath = normalizeHostPath(rawHostContentPath) ?? rawHostContentPath;
+
   const parsed = ConfigSchema.safeParse({
     saasUrl: process.env.CONTENT_BRIDGE_SAAS_URL ?? '',
     setupUiPort: Number(process.env.CONTENT_BRIDGE_SETUP_UI_PORT ?? '8123'),
@@ -259,12 +276,14 @@ export function loadConfig(): BridgeConfig {
     // MIRROR of the operator's content path (`/sources/host<host_path>`) — the
     // SAME host directory as the old /sources/local, so rel_paths are byte-
     // identical (no re-index). CONTENT_BRIDGE_SOURCE_ROOT is no longer read.
-    sourceRoot: hostPathToContainerPath(process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '') ?? '',
+    // doc 119: derived from the CANONICAL host path above, so the mirror the daemon
+    // indexes is the same string the wizard wrote into the compose mount's target.
+    sourceRoot: hostPathToContainerPath(hostContentPath) ?? '',
     // doc 118 Part B: never from env — the CEK arrives via the gateway HELLO_ACK and is
     // loaded from paired.json in main.ts. Always '' at config load.
     encryptionKeyHex: '',
     thumbWritableRoot: process.env.CONTENT_BRIDGE_THUMB_WRITABLE_ROOT ?? '/writable/source',
-    hostContentPath: process.env.CONTENT_BRIDGE_HOST_CONTENT_PATH ?? '',
+    hostContentPath,
     thumbSubpathWithinProject: process.env.CONTENT_BRIDGE_THUMB_SUBPATH_WITHIN_PROJECT ?? 'Pics/Bridge Thumbnails',
     thumbPositions: positions,
     thumbConcurrency: Number(process.env.CONTENT_BRIDGE_THUMB_CONCURRENCY ?? '1'),

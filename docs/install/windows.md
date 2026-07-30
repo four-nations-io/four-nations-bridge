@@ -5,95 +5,98 @@ your content folder, and connects it to **your account** — your files stay on
 your machine; the service only ever receives the file index, thumbnails, and
 short previews.
 
-Windows runs the bridge inside **WSL 2** — the same Linux engine Docker Desktop
-already uses — so the install is the tested, signature-verified Linux installer
-run from your WSL distro. There's no separate Windows program to maintain, and
-you get the exact same supply-chain check (the install stops if the image
-signature doesn't verify — see [security.md](security.md)).
+**The setup wizard in the app is the supported way to install.** It is click,
+copy and paste: it builds your two setup files for you, and there is exactly one
+command to run. You do **not** need Ubuntu, WSL, or any Linux app — `docker
+compose` runs natively in PowerShell through Docker Desktop.
+
+Open the app, go to **Install Bridge**, and follow it. This page is the written
+version of the same steps, plus the manual alternative.
 
 What you need before starting:
 
-- Windows 10/11 with **WSL 2** available
-- A **pairing code** — you generate this yourself in the app on the **Install
-  Bridge** page (`/install-bridge`) when you're ready to pair
-- Your **content encryption key** (from your install instructions)
-- ~15 minutes
+- Windows 10/11 with **Docker Desktop**
+- A **pairing key** — the wizard creates it for you. That one key is all you
+  need; the content key is delivered automatically when you pair.
+- ~10 minutes
 
-## 1. Install Docker Desktop with WSL 2
+## 1. Install Docker Desktop
 
 1. Install Docker Desktop:
-   <https://docs.docker.com/desktop/setup/install/windows-install/> — choose the
-   **WSL 2 backend** when prompted (it's the default; reboot if asked).
-2. Launch Docker Desktop once and wait until it reports **Running**.
-3. In **Settings → Resources → WSL integration**, enable integration for your
-   Linux distro (e.g. Ubuntu). If you don't have a distro yet, install one from
-   the Microsoft Store (Ubuntu is the simplest), open it once to finish setup,
-   then enable it here.
+   <https://docs.docker.com/desktop/setup/install/windows-install/>. It sets up
+   its own engine automatically (reboot if it asks).
+2. Launch it once and wait until it reports **Running**.
+3. In **Settings → General**, turn on **"Start Docker Desktop when you sign
+   in"** so the bridge comes back on its own after you restart your PC.
 
-## 2. Run the installer inside WSL
+## 2. Download your setup files
 
-Open your WSL distro's terminal (search "Ubuntu" in the Start menu), then
-download and run the Linux installer there. Inspect the scripts first if you
-like — they're plain shell.
+In the app's Install Bridge wizard, tell it where your content lives, then press
+**Download**. You get `four-nations-bridge.zip` containing `docker-compose.yml`
+and `bridge.env`.
 
-<!-- TODO(V1-block: github-assets): for V0.9d `<release-url>` is the app's own
-     /install path (e.g. https://your-app-domain/install); swap to the
-     GitHub-released asset URL at V1.0 close. -->
+**Getting your content folder path:** in File Explorer, hold **Shift**,
+right-click the folder, and choose **"Copy as path"**. Paste that straight into
+the wizard — quotes, backslashes and all. The wizard tidies it into the form the
+bridge needs (`C:/Users/you/Videos`); there is nothing to edit by hand.
 
-```bash
-curl -fsSLO <release-url>/install-linux.sh
-curl -fsSLO <release-url>/install-common.sh
-less install-linux.sh      # optional: inspect before running
-bash install-linux.sh
+Content on an **external or network drive** must first be added under Docker
+Desktop → Settings → Resources → File sharing. Folders on another computer
+(`\\server\share`) are not supported yet — copy the content onto this PC, or use
+a folder on a drive Docker Desktop can share.
+
+Right-click the `.zip` → **Extract All** → **Extract**. You get a
+`four-nations-bridge` folder with both files already inside.
+
+## 3. Run one command
+
+Open that folder in File Explorer, click the **address bar** at the top, type
+`powershell`, and press **Enter**. PowerShell opens already pointed at the
+folder, so there is no path to type. Then paste:
+
+```powershell
+docker compose --env-file bridge.env up -d
 ```
 
-When the installer asks for your **content folder**, give it a path your WSL
-distro can see. Your Windows drives are mounted under `/mnt/` — for example
-`C:\Users\you\Content` is `/mnt/c/Users/you/Content`. The installer mounts that
-folder **read-only**, so the bridge can never change or delete anything in it.
+Look for `✔ Container four-nations-bridge  Started`.
 
-The installer will:
+> If you see `invalid spec: … too many colons`, your `bridge.env` and
+> `docker-compose.yml` are from **before bridge 1.3.0** — download your setup
+> files again from the app. Windows content paths need the newer pair (planning
+> doc 119).
 
-1. Check Docker + Compose v2 (provided by Docker Desktop's WSL integration)
-2. Pull the bridge image and **verify its publisher signature** (hard stop on
-   failure)
-3. Ask for your content folder, service URL, pairing code, encryption key, and a
-   **bridge name** (defaults to this machine's name)
-4. Start the container and print the setup-wizard address
+## 4. Finish in the setup page
 
-## 3. Finish in the setup wizard
-
-Open the address the installer printed — in a browser **on this PC**:
-
-```
-http://localhost:8124
-```
-
-The wizard walks three steps: pair with your account (paste the pairing code you
-generated in the app, and pick a name for this bridge), confirm your content
-folder, finish. When it shows **"Your account is paired with this bridge"**
-you're done — close the window; the bridge keeps running.
+Open `http://localhost:8124` in a browser **on this PC**. Three steps: paste
+your pairing key, confirm your settings, done. When it shows **Connected**, the
+bridge is indexing — close the window; it keeps running.
 
 Sign in to your account from any device — phone, laptop, tablet — and your
 content library is there. Pairing is account-level: there's nothing to set up
 per device. A partner pairs with their **own** account; accounts are never
 shared.
 
-## Manual alternative (no WSL installer)
+## Manual alternative (the WSL installer script)
 
-If you'd rather not run the installer, you can run the same container by hand:
-keep Docker Desktop + WSL 2 running, place a `docker-compose.yml` and a `.env`
-(content folder path, service URL, pairing code, encryption key) in a folder,
-then `docker compose up -d` and open `http://localhost:8124` to pair. The
-installer above just generates those two files for you — running it inside WSL
-is the supported, signature-checked path and is recommended.
+The shell installer (`install-linux.sh`) is bash, so on Windows it needs a WSL
+distro with Docker Desktop's WSL integration enabled, and it takes content paths
+in WSL form (`/mnt/c/Users/you/Content`). It is **not** the recommended path —
+the wizard above needs no Linux distro at all — but it is available if you
+already live in WSL. See [linux.md](linux.md); everything there applies once
+you're inside the distro's terminal.
+
+To verify the image signature yourself before running anything, see
+[security.md](security.md).
 
 ## Everyday operations
+
+Run these in PowerShell, from your `four-nations-bridge` folder.
 
 | Task | How |
 | --- | --- |
 | Check the bridge | open `http://localhost:8124` (status page) |
-| Logs | `docker logs four-nations-bridge` (in WSL) |
-| Stop / start | `cd ~/four-nations-bridge && docker compose stop` / `start` (in WSL) |
-| Update to a new release | re-run `bash install-linux.sh` (pairing survives) |
+| Logs | `docker logs four-nations-bridge` |
+| Stop / start | `docker compose stop` / `docker compose start` |
+| Update to a new release | edit the image tag in `docker-compose.yml`, then `docker compose --env-file bridge.env up -d` (pairing survives — it lives in `bridge-data`, not the image) |
+| Change your content folder | edit `CONTENT_BRIDGE_HOST_CONTENT_PATH` **and** `CONTENT_BRIDGE_CONTAINER_MOUNT_PATH` in `bridge.env` together, then recreate. Easier: re-download the files from the wizard with the new folder. |
 | Re-pair | see [security.md → Re-pairing](security.md#re-pairing) |

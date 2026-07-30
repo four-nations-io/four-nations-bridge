@@ -1,0 +1,126 @@
+{
+  "_comment": [
+    "PINNED host-path vectors for the content-bridge mirror model (planning doc 119).",
+    "",
+    "Read by BOTH implementations' tests:",
+    "  four-nations-bridge/src/source-roots/resolve.test.mjs        (node --test)",
+    "  four-nations-web/next-app/src/lib/bridgeMirrorPath.test.ts   (vitest)",
+    "",
+    "The web app holds a byte-identical COPY of the mirror functions because the two",
+    "are separate npm projects and the bridge's Docker build context contains only the",
+    "bridge, so a shared module is impossible. This file is the contract between them.",
+    "A divergence mounts one path and indexes another, which surfaces as the badly",
+    "misleading 'PERMISSION PROBLEM - can't READ content folder'.",
+    "",
+    "`canonical` is normalizeHostPath(input) - the ONE spelling written to bridge.env,",
+    "sent on HELLO and stored as a source root's host_path. `mirror` is",
+    "hostPathToContainerPath(canonical) - the container side of the bind. null = reject.",
+    "",
+    "The POSIX rows are a REGRESSION FENCE, not decoration: every installed Mac, Linux",
+    "and NAS bridge derives its index root through this function, so a changed POSIX",
+    "output would silently re-map the entire installed base."
+  ],
+
+  "posix": [
+    {
+      "why": "Synology NAS - the operator's own prod shape",
+      "input": "/volume1/photo/Content",
+      "canonical": "/volume1/photo/Content",
+      "mirror": "/sources/host/volume1/photo/Content"
+    },
+    {
+      "why": "macOS home folder",
+      "input": "/Users/you/Movies/Content",
+      "canonical": "/Users/you/Movies/Content",
+      "mirror": "/sources/host/Users/you/Movies/Content"
+    },
+    {
+      "why": "Linux home folder",
+      "input": "/home/you/Videos",
+      "canonical": "/home/you/Videos",
+      "mirror": "/sources/host/home/you/Videos"
+    },
+    {
+      "why": "spaces are preserved on POSIX too",
+      "input": "/Users/you/My Content/Clips",
+      "canonical": "/Users/you/My Content/Clips",
+      "mirror": "/sources/host/Users/you/My Content/Clips"
+    },
+    {
+      "why": "trailing slash is stripped by the canonicalizer",
+      "input": "/volume1/photo/Content/",
+      "canonical": "/volume1/photo/Content",
+      "mirror": "/sources/host/volume1/photo/Content"
+    },
+    {
+      "why": "duplicate separators collapse",
+      "input": "/volume1//photo///Content",
+      "canonical": "/volume1/photo/Content",
+      "mirror": "/sources/host/volume1/photo/Content"
+    }
+  ],
+
+  "windows": [
+    {
+      "why": "the operator's REAL path, exactly as Explorer's 'Copy as path' emits it - quoted, backslashed, and containing a space",
+      "input": "\"C:\\Users\\Home\\Desktop\\Network Share\\Vids\"",
+      "canonical": "C:/Users/Home/Desktop/Network Share/Vids",
+      "mirror": "/sources/host/c/Users/Home/Desktop/Network Share/Vids"
+    },
+    {
+      "why": "same path unquoted",
+      "input": "C:\\Users\\Home\\Desktop\\Network Share\\Vids",
+      "canonical": "C:/Users/Home/Desktop/Network Share/Vids",
+      "mirror": "/sources/host/c/Users/Home/Desktop/Network Share/Vids"
+    },
+    {
+      "why": "same path already forward-slashed (what the wizard's placeholder shows)",
+      "input": "C:/Users/Home/Desktop/Network Share/Vids",
+      "canonical": "C:/Users/Home/Desktop/Network Share/Vids",
+      "mirror": "/sources/host/c/Users/Home/Desktop/Network Share/Vids"
+    },
+    {
+      "why": "CASE STABILITY - Windows treats C: and c: as one drive, so both must land on one mirror or the mount and the index disagree",
+      "input": "c:/users/x",
+      "canonical": "C:/users/x",
+      "mirror": "/sources/host/c/users/x"
+    },
+    {
+      "why": "a drive other than C, with a trailing slash",
+      "input": "D:\\Media\\",
+      "canonical": "D:/Media",
+      "mirror": "/sources/host/d/Media"
+    },
+    {
+      "why": "mixed separators",
+      "input": "C:\\Users/Home\\Videos",
+      "canonical": "C:/Users/Home/Videos",
+      "mirror": "/sources/host/c/Users/Home/Videos"
+    },
+    {
+      "why": "surrounding whitespace from a sloppy paste",
+      "input": "  C:\\Users\\you\\Videos  ",
+      "canonical": "C:/Users/you/Videos",
+      "mirror": "/sources/host/c/Users/you/Videos"
+    },
+    {
+      "why": "drive root",
+      "input": "C:/",
+      "canonical": "C:/",
+      "mirror": "/sources/host/c/"
+    }
+  ],
+
+  "rejected": [
+    { "why": "relative path", "input": "relative/path", "reason": "not-absolute" },
+    { "why": "bare drive with no separator is ambiguous on Windows", "input": "C:", "reason": "not-absolute" },
+    { "why": "empty", "input": "", "reason": "empty" },
+    { "why": "whitespace only", "input": "   ", "reason": "empty" },
+    { "why": "UNC share - deferred, doc 119 Out of Scope", "input": "\\\\server\\share\\Vids", "reason": "unc" },
+    { "why": "quoted UNC share", "input": "\"\\\\nas\\media\"", "reason": "unc" },
+    { "why": "traversal, Windows", "input": "C:\\Users\\..\\Windows", "reason": "dot-dot" },
+    { "why": "traversal, POSIX", "input": "/volume1/photo/../../etc", "reason": "dot-dot" },
+    { "why": "traversal that would escape the drive root", "input": "C:/../../etc", "reason": "dot-dot" },
+    { "why": "a colon past the drive letter is not a real Windows path", "input": "C:/a:b", "reason": "not-absolute" }
+  ]
+}
