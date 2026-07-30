@@ -205,6 +205,104 @@ code {
   font-size: 1.05rem;
 }
 
+/* ── Status page: collapsible sections ─────────────────────────────────────
+ * Each section is a native <details> styled as a card. Collapsed shows the
+ * title plus the ONE live value that matters (the dot + its label), so the
+ * page answers "is it working?" without expanding anything. */
+#status-view {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.statsec {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.statsec__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 1.1rem 1.35rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+/* Hide the native disclosure triangle in both engines; the chevron below
+ * replaces it so the control looks the same everywhere. */
+.statsec__summary::-webkit-details-marker {
+  display: none;
+}
+.statsec__summary::marker {
+  content: '';
+}
+
+.statsec__summary:hover {
+  background: var(--bg-accent, rgba(127, 127, 127, 0.06));
+}
+
+.statsec__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.statsec__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* The live highlight, plus a chevron that rotates when the section opens. */
+.statsec__hi {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  min-width: 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.statsec__hi--quiet {
+  font-style: italic;
+}
+
+.statsec__summary::after {
+  content: '';
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-left: 0.15rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translate(-0.1rem, -0.1rem);
+  transition: transform 0.15s ease;
+}
+
+.statsec[open] > .statsec__summary::after {
+  transform: rotate(-135deg) translate(-0.1rem, -0.1rem);
+}
+
+.statsec__body {
+  padding: 0 1.35rem 1.35rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+}
+
+.statsec__body .kv {
+  margin: 0;
+}
+
+.statsec__body .helper + .helper {
+  margin-top: 0.75rem;
+}
+
 .dot {
   display: inline-block;
   width: 10px;

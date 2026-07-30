@@ -10,9 +10,10 @@
 #
 # Supply-chain model (see docs/install/security.md):
 #   pull image → resolve its immutable digest → cosign-verify THAT digest
-#   against the publisher public key embedded below → generate compose pinned
-#   to the digest → start. The tag is only used to discover the digest; what
-#   runs is exactly what was verified (no verify-then-repush TOCTOU).
+#   KEYLESS against the publisher's workflow identity + OIDC issuer (below) →
+#   generate compose pinned to the digest → start. The tag is only used to
+#   discover the digest; what runs is exactly what was verified (no
+#   verify-then-repush TOCTOU).
 #
 # curl-pipe-sh note: these scripts are safe to download-first-then-inspect,
 # and the docs recommend exactly that. Nothing here requires piping.
@@ -21,9 +22,13 @@ set -euo pipefail
 
 # ─── Tunables (env-overridable) ─────────────────────────────────────────────
 
-# Published bridge image. The version tag is what releases advertise;
-# override FN_BRIDGE_IMAGE to pin a specific version.
-FN_BRIDGE_IMAGE="${FN_BRIDGE_IMAGE:-ghcr.io/REPLACE-GHCR-OWNER/four-nations-bridge:latest}"
+# Published bridge image. PINNED to a release tag, never :latest — a pinned tag
+# pulls reliably (Synology's Container Manager caches :latest and silently stops
+# re-pulling) and stays cosign-verifiable. Override FN_BRIDGE_IMAGE_TAG to install
+# a different release. ⚠️ Bump this in the SAME change set as any new release, in
+# step with next-app/public/install/docker-compose.yml.
+FN_BRIDGE_IMAGE_TAG="${FN_BRIDGE_IMAGE_TAG:-1.3.1}"
+FN_BRIDGE_IMAGE="${FN_BRIDGE_IMAGE:-ghcr.io/four-nations-io/four-nations-bridge:${FN_BRIDGE_IMAGE_TAG}}"
 
 # Setup wizard port on the creator's machine (always bound to 127.0.0.1).
 FN_BRIDGE_UI_PORT="${FN_BRIDGE_UI_PORT:-8124}"
@@ -32,12 +37,23 @@ FN_BRIDGE_UI_PORT="${FN_BRIDGE_UI_PORT:-8124}"
 # signature verification. Never use this for a real install.
 FN_BRIDGE_ALLOW_UNSIGNED="${FN_BRIDGE_ALLOW_UNSIGNED:-0}"
 
-# Publisher cosign public key. Embedded (not fetched) so the script's own
-# integrity covers the key — replace the placeholder when the release key is
-# generated (cosign generate-key-pair; private half lives ONLY in CI secrets).
-FN_BRIDGE_COSIGN_PUBKEY='-----BEGIN PUBLIC KEY-----
-REPLACE-WITH-PUBLISHER-COSIGN-PUBLIC-KEY
------END PUBLIC KEY-----'
+# Publisher identity for KEYLESS (Sigstore) verification.
+#
+# The release workflow (.github/workflows/bridge-publish.yml) signs with
+# `cosign sign` under its GitHub OIDC identity — there is no private key anywhere,
+# and the signature is recorded in the public Rekor transparency log. So the
+# matching check is `cosign verify --certificate-identity-regexp
+# --certificate-oidc-issuer`, NOT `--key`. (This script previously carried a
+# `REPLACE-WITH-PUBLISHER-COSIGN-PUBLIC-KEY` placeholder and verified with --key:
+# it fails closed, so the scripted install has been unusable on every platform
+# rather than insecure. Planning doc 119.)
+#
+# The regexp accepts any RELEASE TAG of that workflow in that repo, so a new
+# version verifies without editing this script, while a signature from any other
+# workflow, repo, branch or issuer is rejected.
+FN_BRIDGE_COSIGN_IDENTITY_REGEXP="${FN_BRIDGE_COSIGN_IDENTITY_REGEXP:-^https://github\.com/four-nations-io/four-nations-bridge/\.github/workflows/bridge-publish\.yml@refs/tags/v.+$}"
+FN_BRIDGE_COSIGN_ISSUER="${FN_BRIDGE_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
+FN_BRIDGE_COSIGN_REPO="${FN_BRIDGE_COSIGN_REPO:-four-nations-io/four-nations-bridge}"
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -232,23 +248,30 @@ bridge_pull_and_verify_image() {
     return 0
   fi
 
-  if printf '%s' "$FN_BRIDGE_COSIGN_PUBKEY" | grep -q 'REPLACE-WITH-PUBLISHER'; then
-    bridge_die "This copy of the install script has no publisher key embedded — it can't verify the image. Download the script from the official release (or, for dev only, re-run with FN_BRIDGE_ALLOW_UNSIGNED=1)."
-  fi
   if ! command -v cosign >/dev/null 2>&1; then
     bridge_die "cosign is required to verify the image signature. Install: https://docs.sigstore.dev/cosign/system_config/installation/"
   fi
 
-  bridge_say "Verifying image signature (cosign)…"
-  local keyfile
-  keyfile="$(mktemp)"
-  printf '%s\n' "$FN_BRIDGE_COSIGN_PUBKEY" > "$keyfile"
-  # HARD STOP on any verification failure — never warn-and-continue.
-  if ! cosign verify --key "$keyfile" "$FN_IMAGE_PINNED" >/dev/null; then
-    rm -f "$keyfile"
+  bridge_say "Verifying image signature (cosign, keyless)…"
+  # HARD STOP on any verification failure — never warn-and-continue. Both flags
+  # are REQUIRED: without --certificate-identity-regexp cosign would accept a
+  # signature from any identity, and without --certificate-oidc-issuer it would
+  # accept one from any issuer, which together defeat the point of verifying.
+  # --certificate-github-workflow-repository is belt-and-braces: the identity regexp
+  # already pins owner/repo, but this also defeats the reusable-workflow identity
+  # confusion class (if bridge-publish.yml ever gained `on: workflow_call`, a third
+  # party could invoke it and mint a cert whose job_workflow_ref matches the regexp
+  # while the RUN belongs to them). Costs nothing today; pre-empts that entirely.
+  #
+  # stderr is deliberately NOT suppressed — on a real verification failure cosign's
+  # reason is the only troubleshooting signal the creator has.
+  if ! cosign verify \
+      --certificate-identity-regexp "$FN_BRIDGE_COSIGN_IDENTITY_REGEXP" \
+      --certificate-oidc-issuer "$FN_BRIDGE_COSIGN_ISSUER" \
+      --certificate-github-workflow-repository "$FN_BRIDGE_COSIGN_REPO" \
+      "$FN_IMAGE_PINNED" >/dev/null; then
     bridge_die "IMAGE SIGNATURE VERIFICATION FAILED for ${FN_IMAGE_PINNED}. Refusing to install. This can mean a compromised registry or a tampered image — do not proceed; report it."
   fi
-  rm -f "$keyfile"
   bridge_note "Signature OK."
 }
 

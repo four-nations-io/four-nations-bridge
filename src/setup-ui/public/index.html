@@ -233,136 +233,165 @@
       </section>
 
       <!-- ════════ Status view (shown once PAIRED) ════════ -->
+      <!-- Status page. Every section is a collapsed <details>; the SUMMARY carries the
+           one line that matters, so the page reads at a glance and the detail is one
+           click away. Ids are unchanged so the existing pollers keep driving it. -->
       <section id="status-view" hidden>
-      <section class="card status-card" aria-labelledby="status-h">
-        <h2 id="status-h">Connection</h2>
-        <p class="status-row">
-          <span class="dot dot--unknown" id="status-dot" aria-hidden="true"></span>
-          <span class="status-label" id="status-label">loading…</span>
-        </p>
-        <dl class="kv">
-          <dt>Bridge name</dt>
-          <dd id="kv-device-label">—</dd>
-          <dt>Platform</dt>
-          <dd id="kv-device-platform">—</dd>
-          <dt>SaaS URL</dt>
-          <dd id="kv-saas-url">—</dd>
-          <dt>Source root</dt>
-          <dd id="kv-source-root">—</dd>
-          <dt>App version</dt>
-          <dd id="kv-app-version">—</dd>
-          <dt>Bridge device id</dt>
-          <dd id="kv-bridge-device-id">—</dd>
-          <dt>Pairing</dt>
-          <dd id="kv-pairing">—</dd>
-          <dt>Reconnect attempts</dt>
-          <dd id="kv-reconnect-attempts">—</dd>
-          <dt>Last event</dt>
-          <dd id="kv-last-event">—</dd>
-        </dl>
-      </section>
-
-      <!-- ════════ Security: harden the bridge account (post-pairing) ════════ -->
-      <section class="card" id="security-card" aria-labelledby="security-h" hidden>
-        <h2 id="security-h">Security · bridge account</h2>
-        <p class="status-row">
-          <span class="dot dot--unknown" id="security-dot" aria-hidden="true"></span>
-          <span class="status-label" id="security-summary">…</span>
-        </p>
-        <p class="helper">
-          The bridge runs as <code id="security-runas">—</code>. Running it as a
-          <strong>dedicated low-privilege user</strong> limits the damage if the container is
-          ever compromised — recommended for sensitive content. The browser can't change this
-          live (the user is fixed when the container starts), so pick a route below, run the
-          commands on the machine that hosts the bridge, and reload this page to verify.
-        </p>
-        <div class="harden-routes" id="harden-routes">
-          <button class="button button--secondary" data-route="auto" type="button">Auto-create for me</button>
-          <button class="button button--secondary" data-route="guided" type="button">Guide me</button>
-          <button class="button button--secondary" data-route="info" type="button">Keep current</button>
-        </div>
-        <div id="harden-blocks"></div>
-        <div class="field" id="harden-uid-field" hidden>
-          <label for="harden-uid">New user's uid:gid</label>
-          <input type="text" id="harden-uid" placeholder="e.g. 1099:100" autocomplete="off" spellcheck="false" />
-          <p class="wizard__error" id="harden-uid-error" role="alert" hidden></p>
-          <div class="wizard__actions">
-            <button class="button" id="harden-uid-apply" type="button">Generate restart command</button>
+        <details class="statsec" id="sec-connection">
+          <summary class="statsec__summary">
+            <span class="statsec__title">Connection</span>
+            <span class="statsec__hi">
+              <span class="dot dot--unknown" id="status-dot" aria-hidden="true"></span>
+              <span class="status-label" id="status-label">loading…</span>
+            </span>
+          </summary>
+          <div class="statsec__body">
+            <dl class="kv">
+              <dt>Bridge name</dt>
+              <dd id="kv-device-label">—</dd>
+              <dt>Platform</dt>
+              <dd id="kv-device-platform">—</dd>
+              <dt>SaaS URL</dt>
+              <dd id="kv-saas-url">—</dd>
+              <dt>Source root</dt>
+              <dd id="kv-source-root">—</dd>
+              <dt>App version</dt>
+              <dd id="kv-app-version">—</dd>
+              <dt>Bridge device id</dt>
+              <dd id="kv-bridge-device-id">—</dd>
+              <dt>Pairing</dt>
+              <dd id="kv-pairing">—</dd>
+              <dt>Reconnect attempts</dt>
+              <dd id="kv-reconnect-attempts">—</dd>
+              <dt>Last event</dt>
+              <dd id="kv-last-event">—</dd>
+            </dl>
           </div>
-        </div>
-      </section>
+        </details>
 
-      <section class="card status-card" aria-labelledby="sync-h">
-        <h2 id="sync-h">Initial sync</h2>
-        <p class="status-row">
-          <span class="dot dot--unknown" id="sync-dot" aria-hidden="true"></span>
-          <span class="status-label" id="sync-label">—</span>
-        </p>
-        <dl class="kv">
-          <dt>Entries scanned</dt>
-          <dd id="kv-entries-scanned">—</dd>
-          <dt>Batches pushed</dt>
-          <dd id="kv-batches-pushed">—</dd>
-          <dt>Started</dt>
-          <dd id="kv-sync-started">—</dd>
-          <dt>Finished</dt>
-          <dd id="kv-sync-finished">—</dd>
-          <dt>Last batch</dt>
-          <dd id="kv-sync-last-batch">—</dd>
-          <dt>Error</dt>
-          <dd id="kv-sync-error">—</dd>
-        </dl>
-      </section>
+        <details class="statsec" id="sec-sync">
+          <summary class="statsec__summary">
+            <span class="statsec__title">Content sync</span>
+            <span class="statsec__hi">
+              <span class="dot dot--unknown" id="sync-dot" aria-hidden="true"></span>
+              <span class="status-label" id="sync-label">—</span>
+            </span>
+          </summary>
+          <div class="statsec__body">
+            <dl class="kv">
+              <dt>Entries scanned</dt>
+              <dd id="kv-entries-scanned">—</dd>
+              <dt>Batches pushed</dt>
+              <dd id="kv-batches-pushed">—</dd>
+              <dt>Started</dt>
+              <dd id="kv-sync-started">—</dd>
+              <dt>Finished</dt>
+              <dd id="kv-sync-finished">—</dd>
+              <dt>Last batch</dt>
+              <dd id="kv-sync-last-batch">—</dd>
+              <dt>Error</dt>
+              <dd id="kv-sync-error">—</dd>
+            </dl>
+          </div>
+        </details>
 
-      <section class="card status-card" aria-labelledby="thumb-h">
-        <h2 id="thumb-h">Thumbnail sync</h2>
-        <p class="status-row">
-          <span class="dot dot--unknown" id="thumb-dot" aria-hidden="true"></span>
-          <span class="status-label" id="thumb-label">—</span>
-        </p>
-        <dl class="kv">
-          <dt>Videos processed</dt>
-          <dd id="kv-videos-processed">—</dd>
-          <dt>Images processed</dt>
-          <dd id="kv-images-processed">—</dd>
-          <dt>Thumbs written</dt>
-          <dd id="kv-thumbs-written">—</dd>
-          <dt>Thumbs pushed</dt>
-          <dd id="kv-thumbs-pushed">—</dd>
-          <dt>Skipped (already done)</dt>
-          <dd id="kv-skipped-done">—</dd>
-          <dt>Skipped (untyped)</dt>
-          <dd id="kv-skipped-untyped">—</dd>
-          <dt>Failed</dt>
-          <dd id="kv-thumb-failed">—</dd>
-          <dt>Current file</dt>
-          <dd id="kv-thumb-current">—</dd>
-          <dt>Started</dt>
-          <dd id="kv-thumb-started">—</dd>
-          <dt>Finished</dt>
-          <dd id="kv-thumb-finished">—</dd>
-        </dl>
-      </section>
+        <details class="statsec" id="sec-thumbs">
+          <summary class="statsec__summary">
+            <span class="statsec__title">Thumbnails</span>
+            <span class="statsec__hi">
+              <span class="dot dot--unknown" id="thumb-dot" aria-hidden="true"></span>
+              <span class="status-label" id="thumb-label">—</span>
+            </span>
+          </summary>
+          <div class="statsec__body">
+            <dl class="kv">
+              <dt>Videos processed</dt>
+              <dd id="kv-videos-processed">—</dd>
+              <dt>Images processed</dt>
+              <dd id="kv-images-processed">—</dd>
+              <dt>Thumbs written</dt>
+              <dd id="kv-thumbs-written">—</dd>
+              <dt>Thumbs pushed</dt>
+              <dd id="kv-thumbs-pushed">—</dd>
+              <dt>Skipped (already done)</dt>
+              <dd id="kv-skipped-done">—</dd>
+              <dt>Skipped (untyped)</dt>
+              <dd id="kv-skipped-untyped">—</dd>
+              <dt>Failed</dt>
+              <dd id="kv-thumb-failed">—</dd>
+              <dt>Current file</dt>
+              <dd id="kv-thumb-current">—</dd>
+              <dt>Started</dt>
+              <dd id="kv-thumb-started">—</dd>
+              <dt>Finished</dt>
+              <dd id="kv-thumb-finished">—</dd>
+            </dl>
+          </div>
+        </details>
 
-      <section class="card helper-card" aria-labelledby="next-h">
-        <h2 id="next-h">About this bridge</h2>
-        <p class="helper">
-          This bridge indexes your content folder and serves thumbnails + previews to your
-          account over an outbound encrypted connection. Your content stays on this machine —
-          the service never stores your full files.
-        </p>
-        <p class="helper">
-          Your account is paired with this bridge — sign in from any device and your content
-          library is available there. To re-pair (new pairing code or a different account),
-          see the “Re-pairing” section of the install docs: delete
-          <code>paired.json</code> from the bridge’s state folder and restart the container.
-        </p>
-        <p class="helper">
-          Failing handshake? Check the pairing is intact (this page shows “Pairing: wizard”
-          or “Pairing: env”) and that <code>CONTENT_BRIDGE_SAAS_URL</code> resolves from this
-          container’s network namespace.
-        </p>
-      </section>
+        <!-- Security. On Mac and Windows there is nothing to harden — the container
+             already runs as your own account — so that case shows ONE reassuring line
+             and no controls. The dedicated-user story only appears on Linux/NAS, where
+             it is real work with a real payoff. -->
+        <details class="statsec" id="security-card" hidden>
+          <summary class="statsec__summary">
+            <span class="statsec__title">Security</span>
+            <span class="statsec__hi">
+              <span class="dot dot--unknown" id="security-dot" aria-hidden="true"></span>
+              <span class="status-label" id="security-summary">…</span>
+            </span>
+          </summary>
+          <div class="statsec__body">
+            <p class="helper" id="security-simple" hidden>
+              Nothing to do here. The bridge runs as your own user account
+              (<code id="security-runas-simple">—</code>) with a read-only view of your
+              content, so there is nothing extra to lock down on this computer.
+            </p>
+            <div id="security-advanced" hidden>
+              <p class="helper">
+                The bridge runs as <code id="security-runas">—</code>. Running it as a
+                <strong>dedicated low-privilege user</strong> limits the damage if the container
+                is ever compromised. The browser can't change this live (the user is fixed when
+                the container starts), so pick a route below, run the commands on the machine
+                that hosts the bridge, and reload this page to verify.
+              </p>
+              <div class="harden-routes" id="harden-routes">
+                <button class="button button--secondary" data-route="auto" type="button">Auto-create for me</button>
+                <button class="button button--secondary" data-route="guided" type="button">Guide me</button>
+                <button class="button button--secondary" data-route="info" type="button">Keep current</button>
+              </div>
+              <div id="harden-blocks"></div>
+              <div class="field" id="harden-uid-field" hidden>
+                <label for="harden-uid">New user's uid:gid</label>
+                <input type="text" id="harden-uid" placeholder="e.g. 1099:100" autocomplete="off" spellcheck="false" />
+                <p class="wizard__error" id="harden-uid-error" role="alert" hidden></p>
+                <div class="wizard__actions">
+                  <button class="button" id="harden-uid-apply" type="button">Generate restart command</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="statsec" id="sec-about">
+          <summary class="statsec__summary">
+            <span class="statsec__title">About this bridge</span>
+            <span class="statsec__hi statsec__hi--quiet" id="about-hi">—</span>
+          </summary>
+          <div class="statsec__body">
+            <p class="helper">
+              This bridge indexes your content folder and sends thumbnails and short previews to
+              your account. Your files stay on this computer.
+            </p>
+            <p class="helper">
+              Sign in from any device and your content library is there.
+            </p>
+            <p class="helper" id="about-support">
+              Having trouble? <a id="about-support-link" href="#" rel="noreferrer">Contact support</a>
+              and we'll help you get it sorted.
+            </p>
+          </div>
+        </details>
       </section>
     </main>
     <script src="app.js"></script>

@@ -468,7 +468,7 @@
     } catch (err) {
       // The setup page itself is unreachable; keep waiting until the deadline.
       if (Date.now() > verifyDeadline) {
-        verifyFailed('The setup page lost contact with the bridge. Is the container still running?');
+        verifySlow('The setup page lost contact with the bridge. Is the container still running?');
       }
       return;
     }
@@ -485,7 +485,7 @@
           : data.wssStatus === 'stopped'
             ? 'The bridge connection stopped.'
             : 'The bridge has not connected yet.';
-      verifyFailed(base + (detail ? ' Last error: ' + detail : ''));
+      verifySlow(base + (detail ? ' Last error: ' + detail : ''));
     }
   }
 
@@ -497,7 +497,10 @@
     setVerifySvg('ok');
     setVerifyDot('ok');
     if (wiz.verifyLabel) wiz.verifyLabel.textContent = 'Connected. Your content is indexing.';
-    if (wiz.verifyDetail) wiz.verifyDetail.hidden = true;
+    if (wiz.verifyDetail) {
+      wiz.verifyDetail.hidden = false;
+      wiz.verifyDetail.textContent = 'Taking you to your bridge status page...';
+    }
     showError(wiz.verifyError, '');
     if (wiz.verifyActions) wiz.verifyActions.hidden = true;
     if (wiz.verifyDoneNote) wiz.verifyDoneNote.hidden = false;
@@ -505,20 +508,30 @@
       wiz.verifyBrowseLink.href = wizardData.appUrl + '/content/bridge';
       wiz.verifyBrowseWrap.hidden = false;
     }
+    // Land on the status page by itself. Before this the wizard had NO exit: the
+    // only caller of startStatusMode() is the on-load mode decision, so a creator
+    // sat on step 3 until they thought to refresh. A full reload (rather than
+    // calling startStatusMode() in place) re-runs that decision, so the page they
+    // get is exactly the one a refresh produces — no half-torn-down wizard state.
+    // The LAN setup token lives in sessionStorage, so it survives the reload.
+    window.setTimeout(() => {
+      window.location.replace(window.location.pathname + window.location.search);
+    }, 1600);
   }
 
-  function verifyFailed(message) {
-    if (verifyTimer) {
-      clearInterval(verifyTimer);
-      verifyTimer = null;
-    }
+  // Slow, NOT failed. The pairing is already saved and the daemon keeps retrying,
+  // so this keeps polling instead of dead-ending: a connection that lands at 40s
+  // (cold gateway, slow DNS, Cloudflare warm-up) still advances on its own. The
+  // old verifyFailed() cleared the interval, so a late success was never noticed
+  // and the only way forward was the Retry button.
+  function verifySlow(message) {
     setVerifySvg('err');
-    setVerifyDot('err');
-    if (wiz.verifyLabel) wiz.verifyLabel.textContent = 'Not connected yet';
+    setVerifyDot('warn');
+    if (wiz.verifyLabel) wiz.verifyLabel.textContent = 'Still connecting...';
     if (wiz.verifyDetail) {
       wiz.verifyDetail.hidden = false;
       wiz.verifyDetail.textContent =
-        'The pairing is saved. The bridge keeps retrying in the background. You can leave this page open, fix any issue below, and try again.';
+        'Your pairing is saved and the bridge keeps trying in the background. You can leave this page open — it moves on by itself the moment the connection succeeds.';
     }
     showError(wiz.verifyError, message);
     if (wiz.verifyActions) wiz.verifyActions.hidden = false;
@@ -600,23 +613,51 @@
     if (el) el.textContent = value;
   }
 
+  // Platform reported by /api/status (darwin | win32 | linux). Drives whether the
+  // Security section offers the dedicated-user story at all.
+  let lastDevicePlatform = '';
+
+  /** "About this bridge": show the bridge name as the collapsed highlight, and
+   *  point "Contact support" at the creator's own app. If the install never set
+   *  CONTENT_BRIDGE_APP_URL there's nothing to link to, so the sentence is
+   *  dropped rather than rendered as a dead link. */
+  function wireAboutSection(data) {
+    setText($('about-hi'), data.deviceLabel || 'this computer');
+    const support = $('about-support');
+    const link = $('about-support-link');
+    if (!support || !link) return;
+    const appUrl = (data.appUrl || '').replace(/\/+$/, '');
+    if (!appUrl) {
+      support.hidden = true;
+      return;
+    }
+    link.href = appUrl + '/contact';
+    support.hidden = false;
+  }
+
   function renderStatus(data) {
+    // Collapsed-summary wording is for the CREATOR, not for debugging: no
+    // "HELLO_ACK", no "bridge-gateway". The protocol detail is one click away in
+    // the expanded rows (Last event / Reconnect attempts).
     switch (data.wssStatus) {
       case 'connected':
-        setStatus(data.helloAckedAt ? 'ok' : 'warn', data.helloAckedAt ? 'Connected · HELLO acked' : 'Connected · waiting for HELLO_ACK');
+        setStatus(data.helloAckedAt ? 'ok' : 'warn', data.helloAckedAt ? 'Connected' : 'Finishing connection...');
         break;
       case 'connecting':
-        setStatus('warn', 'Connecting to bridge-gateway…');
+        setStatus('warn', 'Connecting...');
         break;
       case 'reconnecting':
-        setStatus('warn', 'Reconnecting (' + (data.reconnectAttempts || 0) + ' attempts)');
+        setStatus('warn', 'Reconnecting...');
         break;
       case 'stopped':
-        setStatus('err', 'Stopped');
+        setStatus('err', 'Not connected');
         break;
       default:
-        setStatus('unknown', 'Unknown · ' + data.wssStatus);
+        setStatus('unknown', 'Unknown');
     }
+
+    lastDevicePlatform = data.devicePlatform || '';
+    wireAboutSection(data);
 
     setText(els.deviceLabel, data.deviceLabel || '—');
     setText(els.devicePlatform, data.devicePlatform || '—');
@@ -732,8 +773,16 @@
       }
     }
 
+    // Mac and Windows have no dedicated-user story worth telling: Docker Desktop
+    // runs the container as the creator's own account and there is no NAS-style
+    // ACL to tighten, so the harden routes are dead controls there. Only Linux and
+    // NAS installs (devicePlatform 'linux') get the full panel. Anything unknown
+    // falls through to the full panel — showing more is the safe default.
+    const simpleSecurity = lastDevicePlatform === 'darwin' || lastDevicePlatform === 'win32';
+
     function renderSummary(data) {
       setText($('security-runas'), data.runAs || '—');
+      setText($('security-runas-simple'), data.runAs || '—');
       const dot = $('security-dot');
       const ok = data.contentReadable && data.managedWritable;
       if (dot) {
@@ -742,9 +791,11 @@
       }
       setText(
         $('security-summary'),
-        'running as ' +
-          (data.runAs || '—') +
-          (ok ? ' · content readable, working folder writable' : ' · permission problem')
+        ok
+          ? simpleSecurity
+            ? 'Nothing to do'
+            : 'Content readable, working folder writable'
+          : 'Permission problem'
       );
     }
 
@@ -790,7 +841,14 @@
     const info = await fetchPlan('info');
     if (!info) return; // endpoint unreachable — leave the card hidden
     renderSummary(info);
+    const simpleBlock = $('security-simple');
+    const advancedBlock = $('security-advanced');
+    if (simpleBlock) simpleBlock.hidden = !simpleSecurity;
+    if (advancedBlock) advancedBlock.hidden = simpleSecurity;
     card.hidden = false;
+    // On Mac/Windows the panel is one sentence, so none of the route handlers
+    // below have anything to bind to — stop here rather than wiring dead buttons.
+    if (simpleSecurity) return;
 
     document.querySelectorAll('#harden-routes [data-route]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -820,11 +878,14 @@
     }
   }
 
-  function startStatusMode() {
-    if (wiz.subtitle) wiz.subtitle.textContent = 'Phase F · V0.8';
+  async function startStatusMode() {
+    if (wiz.subtitle) wiz.subtitle.textContent = 'Your content bridge';
     wiz.root.hidden = true;
     wiz.statusView.hidden = false;
-    pollOnce();
+    // AWAIT the first poll: it is what populates lastDevicePlatform, and
+    // initSecurityPanel branches on it. Firing them concurrently made the panel
+    // race — on a Mac it would sometimes render the full Linux hardening story.
+    await pollOnce();
     setInterval(pollOnce, POLL_INTERVAL_MS);
     initSecurityPanel();
   }

@@ -353,6 +353,9 @@ export function startSetupUiServer(state: SharedState, hooks: SetupUiHooks) {
       deviceLabel: state.config.deviceLabel,
       devicePlatform: state.config.devicePlatform,
       saasUrl: state.config.saasUrl,
+      // The creator's own web-app origin. Used by the status page to link to the
+      // support/contact page and to "browse your content". Empty = links hidden.
+      appUrl: state.config.appUrl,
       sourceRoot: state.config.sourceRoot,
       thumbWritableRoot: state.config.thumbWritableRoot,
       thumbSubpathWithinProject: state.config.thumbSubpathWithinProject,
