@@ -67,7 +67,7 @@ sudo bash /tmp/install-synology.sh
 The script will:
 
 1. Check DSM version + Container Manager
-2. Ask for your **content folder** (e.g. `/volume1/Media/Content`) — mounted
+2. Ask for your **content folder** (e.g. `/volume1/photo/Content`) — mounted
    **read-only**
 3. **Auto-detect the user that owns that folder** and offer it as the run-as
    user (press Enter to accept, or type a different `uid:gid` — e.g. a dedicated
@@ -107,7 +107,7 @@ Answer **yes** to "Enable LAN setup page" and give the NAS's LAN IP/hostname. Th
 installer prints a link with a one-time token:
 
 ```
-http://192.168.1.20:8124/?token=<token>
+http://192.168.1.50:8124/?token=<token>
 ```
 
 Open it from any computer on your network and walk the wizard: confirm your

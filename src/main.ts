@@ -99,16 +99,22 @@ async function probeBridgePermissions(config: ReturnType<typeof loadConfig>): Pr
     let ownerHint = '';
     try {
       const st = await fsp.stat(config.sourceRoot);
+      // planning doc 120: there is no bridge.env any more — the setup file is ONE
+      // docker-compose.yml with the uid inlined on the `user:` line. Naming a file
+      // that does not exist is worse than saying nothing, and a wrong uid is the
+      // single most likely NAS failure, so this is the message that has to be right.
+      // (The older script install still has a CONTENT_BRIDGE_RUN_AS_USER in its .env;
+      // editing `user:` works for that layout too, so one instruction covers both.)
       ownerHint =
-        `Your content folder is owned by ${st.uid}:${st.gid}. Set this in bridge.env, then ` +
-        `re-run "docker compose --env-file bridge.env up -d":\n` +
-        `    CONTENT_BRIDGE_RUN_AS_USER=${st.uid}:${st.gid}\n`;
+        `Your content folder is owned by ${st.uid}:${st.gid}. Set that on the "user:" line ` +
+        `of your docker-compose.yml, then re-run "docker compose up -d":\n` +
+        `    user: '${st.uid}:${st.gid}'\n`;
     } catch {
       ownerHint =
-        `Set CONTENT_BRIDGE_RUN_AS_USER in bridge.env to the uid:gid that owns your content, ` +
-        `then re-run "docker compose --env-file bridge.env up -d". Find it with:\n` +
+        `Set the "user:" line of your docker-compose.yml to the uid:gid that owns your ` +
+        `content, then re-run "docker compose up -d". Find it with:\n` +
         `    macOS:        stat -f '%u:%g' "<your content folder>"\n` +
-        `    Linux / WSL:  stat -c '%u:%g' "<your content folder>"\n`;
+        `    Linux / NAS:  stat -c '%u:%g' "<your content folder>"\n`;
     }
     // eslint-disable-next-line no-console
     console.error(

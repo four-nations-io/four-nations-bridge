@@ -80,36 +80,29 @@ push code to your machine (releases are pull-based and signature-verified).
 
 ## Release signing — what verification gives you
 
-Every published bridge image is signed at build time **keyless** with
-cosign/Sigstore: the publisher's release workflow on GitHub signs the image
-under a short-lived certificate tied to its GitHub identity (there is no
-long-lived signing key), and the signature is recorded in the public **Rekor**
-transparency log. The install script:
+Every published bridge image is signed at build time with the publisher's
+private key (cosign/Sigstore). The install script:
 
 1. pulls the image and resolves its immutable **digest** (content hash)
-2. verifies the signature **of that digest** comes from the expected signer
-   identity (the publisher's release workflow) under GitHub's OIDC issuer
+2. verifies the signature **of that digest** against the publisher public key
+   embedded in the script
 3. pins the generated config to the digest — what runs is exactly what was
    verified
 
 If verification fails the install **stops**. It does not warn-and-continue.
 A failure means the image in the registry is not one the publisher signed —
 that defeats an attacker who compromises the registry itself (they can push an
-image, but they can't produce a signature that verifies as the publisher).
+image, but they can't sign it).
 
 Honest limits: signing does **not** protect against a compromise of the
-publisher's own build pipeline or GitHub org — that's a different attack class.
-Keyless removes the long-lived signing key as a thing that can leak, and every
-signature is publicly auditable in the Rekor transparency log; neither is a
-control that runs on your machine.
+publisher's own signing key or build pipeline — that's a different attack
+class, mitigated by keeping the key only in CI secrets and by Sigstore's
+transparency log, not by anything on your machine.
 
-Verify a release manually any time (cosign 2.x):
+Verify a release manually any time:
 
 ```bash
-cosign verify \
-  --certificate-identity-regexp '^https://github\.com/four-nations-io/four-nations-bridge/\.github/workflows/bridge-publish\.yml@refs/tags/v' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  ghcr.io/four-nations-io/four-nations-bridge:<tag>
+cosign verify --key cosign.pub ghcr.io/REPLACE-GHCR-OWNER/four-nations-bridge:<tag>
 ```
 
 ## About `curl | sh` (and why we don't ask for it)
@@ -179,7 +172,7 @@ service that's briefly unreachable is retried, including on the next restart.
 
 **LAN setup page** — finish setup from your laptop. The installer exposes the
 wizard on your network **protected by a generated one-time token** and hands you
-a link like `http://192.168.1.20:8124/?token=…`. Properties:
+a link like `http://192.168.1.50:8124/?token=…`. Properties:
 
 - every request to the LAN page must carry that token (the link carries it once;
   the page then keeps it in memory and drops it from the address bar)

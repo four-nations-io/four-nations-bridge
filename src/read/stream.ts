@@ -17,8 +17,11 @@
 // SECURITY (arch-note 14 §3): the gateway is treated as potentially compromised.
 // `relPath` is re-validated with `isUnsafeRelPath` before it becomes a filesystem
 // path, exactly like the GENERATE / SYNC_PROJECT write paths. The READ root is
-// always `path.join(config.sourceRoot, relPath)` (source bytes) or the cache
-// `preview.mp4` for the resolved key — never a gateway-supplied absolute path.
+// always `config.sourceRoot` (source bytes) or the bridge-owned cache root — never
+// a gateway-supplied absolute path. Both bases then go through `resolveContained`
+// (doc 83 F4), which realpath-resolves the join and REQUIRES the result to remain
+// under the root, so a symlink planted inside the declared root cannot widen what
+// the daemon serves past the folders the creator actually authorised.
 
 import { createReadStream, promises as fsp } from 'node:fs';
 import type { ReadStream } from 'node:fs';
@@ -133,6 +136,47 @@ type Resolution =
   | { ok: false; code: 'not-found' | 'unsafe' | 'read-error'; reason: string };
 
 /**
+ * doc 83 F4 — resolve `join(root, relPath)` and PROVE the result is still inside
+ * `root` after every symlink has been followed. `isUnsafeRelPath` upstream is a
+ * LEXICAL check (`..`, absolute paths, drive letters); it cannot see a symlink
+ * sitting inside the declared root that points somewhere else entirely — and such
+ * a link need not be placed maliciously (plenty of media tools leave them behind).
+ * The declared content root is the promise the installer makes to the creator
+ * ("only the folders you choose"), so both READ bases must hold it.
+ *
+ * Returns the REALPATH of the target on success, so the caller streams the
+ * resolved file rather than re-walking the links (no TOCTOU gap between the check
+ * and the `createReadStream`).
+ *
+ * This is the single containment implementation for BOTH bases: the cache branch
+ * used to carry its own copy and the source branch had none. Sharing it is the
+ * point — a fix applied to one branch must not be able to miss the other.
+ */
+type Containment =
+  | { ok: true; realPath: string }
+  | { ok: false; code: 'not-found' | 'unsafe'; reason: string };
+
+async function resolveContained(
+  root: string,
+  relPath: string,
+  label: 'cache' | 'source'
+): Promise<Containment> {
+  const abs = path.join(root, relPath);
+  let realRoot: string;
+  let realTarget: string;
+  try {
+    realRoot = await fsp.realpath(root);
+    realTarget = await fsp.realpath(abs);
+  } catch {
+    return { ok: false, code: 'not-found', reason: `${label} file not found` };
+  }
+  if (realTarget !== realRoot && !realTarget.startsWith(realRoot + path.sep)) {
+    return { ok: false, code: 'unsafe', reason: `${label} path escapes ${label} root` };
+  }
+  return { ok: true, realPath: realTarget };
+}
+
+/**
  * Decide which bytes back a READ: the 720p proxy (preview, when it exists +
  * fresh) or the source file. NEVER blocks on a transcode — for a preview of an
  * eligible-but-unproxied source it returns the source + flags a background gen.
@@ -151,20 +195,13 @@ async function resolveTarget(
   // cache root is realpath-confined the same way the upload write path is.
   if (req.base === 'cache') {
     const cacheRoot = resolveActiveCacheRoot(state, config);
-    const cacheAbs = path.join(cacheRoot, req.relPath);
-    let realCacheRoot: string;
-    let realTarget: string;
-    try {
-      realCacheRoot = await fsp.realpath(cacheRoot);
-      realTarget = await fsp.realpath(cacheAbs);
-    } catch {
-      return { ok: false, code: 'not-found', reason: 'cache file not found' };
-    }
     // Containment: the resolved target must stay inside the cache root (defends
     // against symlink escapes that the lexical isUnsafeRelPath check can't catch).
-    if (realTarget !== realCacheRoot && !realTarget.startsWith(realCacheRoot + path.sep)) {
-      return { ok: false, code: 'unsafe', reason: 'cache path escapes cache root' };
+    const contained = await resolveContained(cacheRoot, req.relPath, 'cache');
+    if (!contained.ok) {
+      return { ok: false, code: contained.code, reason: contained.reason };
     }
+    const realTarget = contained.realPath;
     let cacheStat: import('node:fs').Stats;
     try {
       cacheStat = await fsp.stat(realTarget);
@@ -187,7 +224,15 @@ async function resolveTarget(
     };
   }
 
-  const sourceAbs = path.join(config.sourceRoot, req.relPath);
+  // doc 83 F4 — the source base gets the SAME realpath containment as the cache
+  // branch above (it previously had only the lexical isUnsafeRelPath check, so a
+  // symlink inside the creator's content root resolved and was served — bytes from
+  // outside the folder they authorised). Same helper, so the two cannot drift.
+  const containedSource = await resolveContained(config.sourceRoot, req.relPath, 'source');
+  if (!containedSource.ok) {
+    return { ok: false, code: containedSource.code, reason: containedSource.reason };
+  }
+  const sourceAbs = containedSource.realPath;
   let sourceStat: import('node:fs').Stats;
   try {
     sourceStat = await fsp.stat(sourceAbs);

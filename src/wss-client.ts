@@ -1357,6 +1357,29 @@ async function handleListDir(
     }
   } catch (err) {
     const code = (err as Error)?.message ?? "list-dir-failed";
+    // ⭐ AN ABSENT `_twitterUploads/` IS AN EMPTY ONE, NOT A FAILURE. The folder is
+    // created LAZILY, by the first upload that stages a file into it
+    // (`file-upload.ts` mkdir) — so on any bridge nobody has browser-uploaded from,
+    // it does not exist. Reporting that as an error made a healthy bridge tell the
+    // creator "Couldn't load your recent uploads. Is your bridge online?", which is
+    // both wrong and alarming, and it was the FIRST thing every new install showed.
+    //
+    // Answer the question that was actually asked — "what has this user staged?" —
+    // with the truthful answer: nothing yet.
+    //
+    // ⛔ SCOPED THREE WAYS, because the message this removes exists to give a silent
+    // failure a voice (planning doc 81, PB.7) and must keep working:
+    //   · base === "cache" ONLY. A source root is configured, not lazily created, so
+    //     a missing one there is a genuine fault and stays an error.
+    //   · code === "not-found" ONLY — the ROOT being unreadable now raises the
+    //     distinct `root-not-found`, so a missing/unmounted CACHE ROOT still fails
+    //     loudly instead of being flattened into "no uploads".
+    //   · Nothing else is softened: 'invalid-path', 'escapes-root',
+    //     'not-a-directory' and every unexpected code still reply ok:false.
+    if (base === "cache" && code === "not-found") {
+      reply({ ok: true, relPath, dirs: [], files: [] });
+      return;
+    }
     reply({ ok: false, code, message: code });
   }
 }
@@ -1418,6 +1441,15 @@ async function handleRecursiveScan(
     }
   } catch (err) {
     const code = (err as Error)?.message ?? "recursive-scan-failed";
+    // Same lazily-created-folder rule as handleListDir, on the same terms (cache base
+    // + `not-found` only). No caller scans the cache base today — the project-sync
+    // scanners are source-only — but this function is documented as mirroring
+    // handleListDir, and a mirror that disagrees about what an absent upload folder
+    // MEANS is exactly the drift that makes the next reader trust the wrong one.
+    if (base === "cache" && code === "not-found") {
+      reply({ ok: true, relPath, files: [] });
+      return;
+    }
     reply({ ok: false, code, message: code });
   }
 }

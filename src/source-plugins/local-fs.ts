@@ -87,8 +87,18 @@ export class LocalFSPlugin implements SourcePlugin {
    * stay relative to the ROOT, identical to the index namespace, so a browsed
    * file maps 1:1 to its `content_bridge_files` row (thumbs resolve by rel_path).
    *
-   * Throws a coded Error ('invalid-path' | 'not-found' | 'escapes-root' |
-   * 'not-a-directory') the caller turns into a LIST_DIR_RESPONSE error.
+   * Throws a coded Error ('invalid-path' | 'root-not-found' | 'not-found' |
+   * 'escapes-root' | 'not-a-directory') the caller turns into a LIST_DIR_RESPONSE
+   * error.
+   *
+   * ⭐ `root-not-found` (the ROOT itself is unreadable) is deliberately DISTINCT from
+   * `not-found` (the root is fine, the requested child is absent). They used to share
+   * one code, which forced every caller to treat "this folder isn't there" as though
+   * the whole tree had vanished. The cache browse depends on the difference: its
+   * `_twitterUploads/` folder is created LAZILY on first upload (`file-upload.ts`
+   * mkdir), so "absent" is the ordinary state of a bridge nobody has uploaded from —
+   * an empty listing, not a fault. A missing cache ROOT is a real misconfiguration
+   * and must stay loud. See `handleListDir`, which is where that decision is made.
    */
   async listDirImmediate(relDir: string): Promise<LiveDirListing> {
     const clean = path.posix.normalize(relDir || '');
@@ -107,7 +117,8 @@ export class LocalFSPlugin implements SourcePlugin {
     try {
       realRoot = await fs.realpath(this.rootPath);
     } catch {
-      throw new Error('not-found');
+      // The ROOT is unreadable — a different fault from "that child isn't there".
+      throw new Error('root-not-found');
     }
     let realTarget: string;
     try {
@@ -182,8 +193,10 @@ export class LocalFSPlugin implements SourcePlugin {
    * identical to the index namespace.
    *
    * Throws the same coded Errors as `listDirImmediate` ('invalid-path' |
-   * 'not-found' | 'escapes-root' | 'not-a-directory') the caller turns into a
-   * RECURSIVE_SCAN_RESPONSE error.
+   * 'root-not-found' | 'not-found' | 'escapes-root' | 'not-a-directory') the caller
+   * turns into a RECURSIVE_SCAN_RESPONSE error — including the same
+   * `root-not-found` / `not-found` split, so the two mirrored functions keep
+   * reporting the same fault the same way.
    */
   async scanSubtreeImmediate(relDir: string): Promise<LiveSubtreeListing> {
     const clean = path.posix.normalize(relDir || '');
@@ -202,7 +215,8 @@ export class LocalFSPlugin implements SourcePlugin {
     try {
       realRoot = await fs.realpath(this.rootPath);
     } catch {
-      throw new Error('not-found');
+      // The ROOT is unreadable — a different fault from "that child isn't there".
+      throw new Error('root-not-found');
     }
     let realTarget: string;
     try {
