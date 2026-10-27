@@ -100,6 +100,54 @@ export class LocalFSPlugin implements SourcePlugin {
    * an empty listing, not a fault. A missing cache ROOT is a real misconfiguration
    * and must stay loud. See `handleListDir`, which is where that decision is made.
    */
+  /**
+   * Resolve ONE rel-path to an absolute FILE path, under the same confinement
+   * `listDirImmediate` uses: realpath both sides and assert containment, so a
+   * `..` segment or a symlink pointing outside the root is refused rather than
+   * followed.
+   *
+   * ⛔ ITS OWN METHOD RATHER THAN A `path.join` AT THE CALL SITE. That join is
+   *    the entire difference between "read a file in the content root" and
+   *    "read any file on the operator's machine", and a caller that builds it
+   *    inline is one refactor away from dropping the check. Every new
+   *    file-by-rel-path consumer goes through here.
+   *
+   * Throws the same coded errors as `listDirImmediate`, plus 'not-a-file'.
+   */
+  async resolveFileImmediate(relFile: string): Promise<string> {
+    const clean = path.posix.normalize(relFile || '');
+    if (
+      !clean ||
+      clean === '.' ||
+      clean === '/' ||
+      path.posix.isAbsolute(clean) ||
+      clean.split('/').some((seg) => seg === '..') ||
+      clean.includes('\0')
+    ) {
+      throw new Error('invalid-path');
+    }
+    const target = path.join(this.rootPath, clean);
+
+    let realRoot: string;
+    try {
+      realRoot = await fs.realpath(this.rootPath);
+    } catch {
+      throw new Error('root-not-found');
+    }
+    let realTarget: string;
+    try {
+      realTarget = await fs.realpath(target);
+    } catch {
+      throw new Error('not-found');
+    }
+    if (!realTarget.startsWith(realRoot + path.sep)) {
+      throw new Error('escapes-root');
+    }
+    const st = await fs.stat(realTarget);
+    if (!st.isFile()) throw new Error('not-a-file');
+    return realTarget;
+  }
+
   async listDirImmediate(relDir: string): Promise<LiveDirListing> {
     const clean = path.posix.normalize(relDir || '');
     if (

@@ -90,6 +90,47 @@ export interface ThumbnailGeneratorOpts {
   proxyThreads: number;
 }
 
+/**
+ * Probe a video's duration in seconds via ffprobe. Returns null if the probe
+ * fails (not a video, unsupported codec, unreadable file).
+ *
+ * ⭐ A FREE FUNCTION, not only a method, because there are now TWO callers with
+ *    different needs: the thumbnail generator (which has a configured instance)
+ *    and the daemon's PROBE_DURATIONS handler (which wants a duration and has no
+ *    business constructing a thumbnail generator — cache root, proxy threads and
+ *    all — to get one). The class method delegates here, so there is still
+ *    exactly one place that knows the ffprobe invocation.
+ */
+export async function probeDurationSeconds(
+  ffprobePath: string,
+  sourceFullPath: string,
+): Promise<number | null> {
+  return new Promise((resolve) => {
+    const args = [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      sourceFullPath,
+    ];
+    const proc = spawn(ffprobePath, args);
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => (stdout += d.toString()));
+    proc.stderr.on('data', (d) => (stderr += d.toString()));
+    proc.on('error', () => resolve(null));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`ffprobe failed for ${sourceFullPath} (exit=${code}): ${stderr.trim()}`);
+        return resolve(null);
+      }
+      const dur = Number(stdout.trim());
+      if (!Number.isFinite(dur) || dur <= 0) return resolve(null);
+      resolve(dur);
+    });
+  });
+}
+
 export class ThumbnailGenerator {
   constructor(private readonly opts: ThumbnailGeneratorOpts) {}
 
@@ -99,30 +140,7 @@ export class ThumbnailGenerator {
    * skip thumb generation for that file.
    */
   async probeDuration(sourceFullPath: string): Promise<number | null> {
-    return new Promise((resolve) => {
-      const args = [
-        '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        sourceFullPath,
-      ];
-      const proc = spawn(this.opts.ffprobePath, args);
-      let stdout = '';
-      let stderr = '';
-      proc.stdout.on('data', (d) => (stdout += d.toString()));
-      proc.stderr.on('data', (d) => (stderr += d.toString()));
-      proc.on('error', () => resolve(null));
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          // eslint-disable-next-line no-console
-          console.warn(`ffprobe failed for ${sourceFullPath} (exit=${code}): ${stderr.trim()}`);
-          return resolve(null);
-        }
-        const dur = Number(stdout.trim());
-        if (!Number.isFinite(dur) || dur <= 0) return resolve(null);
-        resolve(dur);
-      });
-    });
+    return probeDurationSeconds(this.opts.ffprobePath, sourceFullPath);
   }
 
   /**

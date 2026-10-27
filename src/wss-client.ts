@@ -16,6 +16,8 @@ import WebSocket from "ws";
 import { promises as fsp, constants as fsConstants } from "node:fs";
 import type { BridgeConfig } from "./config";
 import { LocalFSPlugin } from "./source-plugins/local-fs";
+// ONE ffprobe invocation, shared with the thumbnail generator — see its header.
+import { probeDurationSeconds } from "./thumb/generator";
 import type { FileEntry } from "./source-plugins/types";
 import {
   runThumbSync,
@@ -880,6 +882,24 @@ export function startWssClient(state: SharedState): WssClient {
         void handleRecursiveScan(ws, state, requestId, relPath, base);
         return;
       }
+      if (msg?.type === "PROBE_DURATIONS") {
+        // Report each named video's duration in seconds. The SaaS media sync
+        // uses it to fill a project's Length automatically.
+        //
+        // ⛔ AN EXPLICIT LIST, NOT A SUBTREE. RECURSIVE_SCAN is a pure fs read
+        //    and must stay one — folding a probe into it would spawn an ffprobe
+        //    per file on every browse and every project sync. The caller has
+        //    already classified its files and asks about the one or two it
+        //    actually needs.
+        const m = msg as { requestId?: string; relPaths?: unknown };
+        const requestId = typeof m.requestId === "string" ? m.requestId : null;
+        if (!requestId) return;
+        const relPaths = Array.isArray(m.relPaths)
+          ? m.relPaths.filter((r): r is string => typeof r === "string")
+          : [];
+        void handleProbeDurations(ws, state, requestId, relPaths);
+        return;
+      }
       if (msg?.type === "READ_CANCEL") {
         const m = msg as { requestId?: string };
         const requestId = typeof m.requestId === "string" ? m.requestId : null;
@@ -1450,6 +1470,55 @@ async function handleRecursiveScan(
       reply({ ok: true, relPath, files: [] });
       return;
     }
+    reply({ ok: false, code, message: code });
+  }
+}
+
+/**
+ * ⛔ HARD CAP. Each entry spawns an ffprobe; an unbounded list is a request
+ *    that can pin the box. The caller sends one or two, so 16 is slack rather
+ *    than a limit anyone meets — and anything past it is REPORTED as skipped,
+ *    not silently dropped, so a caller that grows cannot quietly lose answers.
+ */
+const PROBE_DURATIONS_MAX = 16;
+
+async function handleProbeDurations(
+  ws: WebSocket,
+  state: SharedState,
+  requestId: string,
+  relPaths: string[],
+): Promise<void> {
+  function reply(payload: Record<string, unknown>): void {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({ type: "PROBE_DURATIONS_RESPONSE", requestId, ...payload }),
+      );
+    }
+  }
+  try {
+    const plugin = new LocalFSPlugin(state.config.sourceRoot);
+    const ffprobePath = process.env.FFPROBE_PATH ?? "ffprobe";
+    const wanted = relPaths.slice(0, PROBE_DURATIONS_MAX);
+    const skipped = relPaths.length - wanted.length;
+
+    // ⚠️ SEQUENTIAL, not Promise.all. These are ffprobe processes on a machine
+    //    that is also serving reads and may be transcoding; sixteen at once is
+    //    a thundering herd on someone's NAS for a convenience feature.
+    const durations: Record<string, number | null> = {};
+    for (const rel of wanted) {
+      try {
+        const full = await plugin.resolveFileImmediate(rel);
+        durations[rel] = await probeDurationSeconds(ffprobePath, full);
+      } catch {
+        // A path that will not resolve, or a file ffprobe cannot read, is a
+        // NULL duration — never a failed request. The caller treats null as
+        // "unknown" and leaves the field alone, which is the right outcome.
+        durations[rel] = null;
+      }
+    }
+    reply({ ok: true, durations, skipped });
+  } catch (err) {
+    const code = (err as Error)?.message ?? "probe-durations-failed";
     reply({ ok: false, code, message: code });
   }
 }
