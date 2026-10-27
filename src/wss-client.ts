@@ -82,6 +82,7 @@ import {
   type ResolvedSourceRoot,
 } from "./source-roots/resolve";
 import { createProject } from "./projects/create";
+import { signalContentChanged } from "./content-changed-signal";
 import {
   enqueueBridgeNotification,
   loadBridgeNotificationQueue,
@@ -1891,6 +1892,19 @@ async function handleCreateProject(
     // Force an immediate re-detect + SCAN_PROJECTS so the new folder shows up
     // in the SaaS projects list right away (not on the next 30s poll).
     void detectAndPushProjects(ws, state, { force: true });
+    // Initiative `synology-photos-reindex`: tell the HOST that content appeared,
+    // so a Synology install can trigger Photos' own reindex — a folder created
+    // by fs.mkdir is otherwise invisible in Photos until a manual re-index.
+    //
+    // ⛔ Guarded on `!alreadyExisted`: that branch wrote nothing, so signalling
+    // it would fire reindexes for folders that were already indexed.
+    //
+    // Fire-and-forget and fail-soft by contract — `signalContentChanged` never
+    // throws, because folder creation must not depend on it. See its header for
+    // why this is a flag rather than the bridge running the command itself.
+    if (!result.alreadyExisted) {
+      void signalContentChanged(state.config.stateDir);
+    }
   } else {
     // eslint-disable-next-line no-console
     console.warn(`bridge: create-project rejected: ${result.reason}`);

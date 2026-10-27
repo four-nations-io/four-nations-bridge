@@ -27,7 +27,7 @@ set -euo pipefail
 # re-pulling) and stays cosign-verifiable. Override FN_BRIDGE_IMAGE_TAG to install
 # a different release. ⚠️ Bump this in the SAME change set as any new release, in
 # step with next-app/public/install/docker-compose.yml.
-FN_BRIDGE_IMAGE_TAG="${FN_BRIDGE_IMAGE_TAG:-1.4.0}"
+FN_BRIDGE_IMAGE_TAG="${FN_BRIDGE_IMAGE_TAG:-1.4.1}"
 FN_BRIDGE_IMAGE="${FN_BRIDGE_IMAGE:-ghcr.io/four-nations-io/four-nations-bridge:${FN_BRIDGE_IMAGE_TAG}}"
 
 # Setup wizard port on the creator's machine (always bound to 127.0.0.1).
@@ -565,4 +565,195 @@ bridge_print_next_steps() {
   bridge_note "The wizard pairs this bridge with your account and confirms your content"
   bridge_note "folder. Once it shows “Your account is paired with this bridge”, you can"
   bridge_note "close the window — the bridge keeps running in the background."
+}
+
+# ─── Synology Photos reindex helper (Synology only) ─────────────────────────
+#
+# Writes the reindex watcher to $1. Lives here as a heredoc — rather than as a
+# third file beside install-synology.sh — because creators download exactly TWO
+# files (install-synology.sh + install-common.sh), and a script the installer
+# expects to find next to itself would simply be absent. Same pattern as
+# fix-perms.sh above. ⭐ This heredoc is the ONE source of truth; there is no
+# standalone copy to drift from it.
+#
+# WHY IT EXISTS: a folder the bridge creates is INVISIBLE in Synology Photos
+# until Photos re-indexes. DSM's indexer is notified by DSM's own file services
+# (smbd, File Station), never by filesystem events — the identical folder made
+# over SMB appears instantly. So the bridge writes a flag and this watcher,
+# running as root on the host, triggers Photos' own reindex.
+#
+# ⛔ The container deliberately cannot do this: `synowebapi` is mode 700
+# root:root and authenticates as SYSTEM_ADMIN by being root on the host, so
+# mounting it in would grant a container admin access to EVERY DSM Web API.
+bridge_write_photos_reindex_script() {
+  local dest="$1"
+  cat > "$dest" <<'REINDEX'
+#!/usr/bin/env bash
+#
+# Four Nations — trigger a Synology Photos reindex when the bridge creates content.
+# Written by install-common.sh; managed by systemd as fn-photos-reindex.service.
+#
+#   fn-photos-reindex.sh              # one shot: if flagged, reindex
+#   fn-photos-reindex.sh --watch 2    # loop, checking every 2s
+#   fn-photos-reindex.sh --force      # reindex now regardless of the flag
+#   fn-photos-reindex.sh --dry-run    # say what it would do, do nothing
+#
+# ⛔ DO NOT "fix" this with synoindex. Measured on DSM 7, 2026-10-27: `-A`,
+# `-f -A`, `-R <dir>`, `-R <parent>`, `-R photo`, `-P SynologyPhotos -A` and
+# `-p MediaIndex -A` ALL returned exit 0 and had NO effect. synoindex writes the
+# legacy MediaIndex; Synology Photos keeps its own Postgres index and does not
+# read it. The only working lever is the Web API below — the one Photos' own
+# resync button calls. `FotoTeam` is DSM's name for the Shared Space.
+
+set -euo pipefail
+
+SYNOWEBAPI="${SYNOWEBAPI:-/usr/syno/bin/synowebapi}"
+STATE_DIR="${STATE_DIR:-/volume1/docker/four-nations-bridge/managed/_state}"
+FLAG="$STATE_DIR/content-changed"
+# ⛔ ROOT-OWNED AND OUTSIDE EVERY CONTAINER-WRITABLE MOUNT. This watcher runs as
+# root; the flag lives in the bridge's read-write bind mount. So root must never
+# perform a symlink-following WRITE on a path the container controls.
+#
+# An earlier version cleared the flag with `rm -f` and restored it with `touch`
+# on failure. `touch` FOLLOWS a symlink and CREATES the target: a compromised
+# bridge (uid 1031) could watch for root's unlink, race a symlink into the flag
+# path aimed anywhere on the host, and have root create a file there. Caught by
+# /security-review before this shipped.
+#
+# Now root only ever STATS the flag (reads are harmless) and writes here.
+MARKER_DIR="${MARKER_DIR:-/var/lib/fn-photos-reindex}"
+MARKER="$MARKER_DIR/last-processed"
+LOG_TAG="fn-photos-reindex"
+
+WATCH=0
+INTERVAL=2
+FORCE=0
+DRY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --watch)
+      WATCH=1
+      if [ $# -ge 2 ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+        INTERVAL="$2"; shift
+      fi
+      ;;
+    --force) FORCE=1 ;;
+    --dry-run) DRY=1 ;;
+    *) echo "unknown flag: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+case "$INTERVAL" in
+  ''|*[!0-9]*) echo "--watch takes a whole number of seconds, got: $INTERVAL" >&2; exit 2 ;;
+esac
+[ "$INTERVAL" -lt 1 ] && INTERVAL=1
+
+log() {
+  echo "[$LOG_TAG] $*" >&2
+  command -v logger >/dev/null 2>&1 && logger -t "$LOG_TAG" "$*" || true
+}
+
+if [ ! -x "$SYNOWEBAPI" ]; then
+  # LOUD on purpose: a DSM upgrade moving this binary is the likeliest way this
+  # breaks, and a silent no-op is the failure mode that made the original bug
+  # take an hour to find.
+  log "FATAL: synowebapi not executable at $SYNOWEBAPI — a DSM update may have moved it. Photos will NOT see new bridge folders until this is fixed."
+  exit 1
+fi
+
+# Checks the API's own "success" : true, NOT the exit code. Seven commands
+# returned exit 0 while doing nothing during the investigation behind this file.
+reindex() {
+  local out rc
+  if [ "$DRY" -eq 1 ]; then
+    log "dry-run: would trigger SYNO.FotoTeam.Index reindex"
+    return 0
+  fi
+  set +e
+  out="$("$SYNOWEBAPI" --exec api=SYNO.FotoTeam.Index method=reindex version=1 2>&1)"
+  rc=$?
+  set -e
+  case "$out" in
+    *'"success" : true'*|*'"success":true'*)
+      # The call only QUEUES the scan (~76ms); Photos reconciles in the
+      # background, typically a few seconds.
+      log "reindex queued"
+      return 0
+      ;;
+  esac
+  log "FAILED: reindex did not report success (rc=$rc): $(echo "$out" | tr '\n' ' ' | cut -c1-300)"
+  return 1
+}
+
+# The flag is interrogated READ-ONLY (stat). "Has it changed since the last
+# successful reindex?" is answered by comparing its mtime against a root-owned
+# marker — so root performs NO write on any container-writable path.
+#
+# This also makes the retry free: not advancing the marker IS the retry, so
+# there is nothing to put back after a failure.
+pass() {
+  if [ "$FORCE" -eq 0 ]; then
+    # ⛔ Refuse a symlinked flag or state dir rather than following it. The
+    # bridge never creates one, so its presence means something is wrong and
+    # root should not dereference it. Belt-and-braces: the stat-only design
+    # above already removes the write primitive.
+    if [ -L "$FLAG" ] || [ -L "$STATE_DIR" ]; then
+      log "REFUSING: $FLAG or $STATE_DIR is a symlink — not following it. The bridge never creates one; investigate."
+      return 0
+    fi
+    [ -f "$FLAG" ] || return 0
+    # ⛔ `-nt` is a SHELL BUILTIN comparing mtimes — deliberately not
+    # `stat -c %Y`, which is GNU-only. An earlier version used it with a
+    # "fail toward doing the work" fallback to `date +%s`; on any system whose
+    # stat lacks -c that made every tick look newer than the marker, turning
+    # this into a reindex loop every INTERVAL seconds — the exact constant
+    # filesystem cost this design exists to avoid. Caught by running the test
+    # battery on a non-GNU `stat`.
+    #
+    # `-nt` is also true when the marker does not exist yet, so a first run
+    # reindexes.
+    [ "$FLAG" -nt "$MARKER" ] || return 0
+  fi
+
+  if [ "$DRY" -eq 1 ]; then
+    reindex
+    return 0
+  fi
+
+  mkdir -p "$MARKER_DIR" 2>/dev/null || true
+  # Snapshot the flag's mtime BEFORE the reindex, into the root-owned dir. If a
+  # folder is created DURING the scan the flag moves past this snapshot, so it
+  # is caught next pass instead of being swallowed by a scan that may already
+  # have walked past it. (`touch -r` only READS the flag; the write lands in the
+  # root-owned marker dir.)
+  touch -r "$FLAG" "$MARKER.sampled" 2>/dev/null || true
+  if reindex; then
+    # `mv` within one directory preserves the snapshot's mtime.
+    mv -f "$MARKER.sampled" "$MARKER" 2>/dev/null \
+      || log "warning: could not advance $MARKER — the next pass will reindex again"
+  else
+    # Leave the marker where it is: not advancing IS the retry.
+    rm -f "$MARKER.sampled" 2>/dev/null || true
+  fi
+  # Always 0: a transient API failure must not kill the watch loop, and leaving
+  # the marker where it is already means the next pass retries.
+  return 0
+}
+
+if [ "$WATCH" -eq 1 ]; then
+  log "watching $FLAG every ${INTERVAL}s"
+  # `[ -f ]` is a builtin: one stat() per tick, no fork, no tree walk, no disk
+  # I/O on a cached dentry. A 2s loop costs LESS than a once-a-minute scheduled
+  # task, which pays a process spawn every time.
+  while true; do
+    pass
+    sleep "$INTERVAL"
+  done
+else
+  pass
+fi
+REINDEX
+  chmod 0755 "$dest"
 }

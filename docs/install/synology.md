@@ -134,6 +134,57 @@ content library is there. Pairing is account-level: nothing to set up per
 device. If a partner uses the same NAS, they pair with their **own** account;
 accounts are never shared.
 
+## Synology Photos and new project folders
+
+When Four Nations creates a project folder, it appears on disk immediately — but **Synology Photos will
+not show it until Photos re-indexes.** The install sets up a small host-side task that handles this for
+you, so a new folder shows up in Photos within a few seconds. You do not need to do anything.
+
+If you ever need to trigger it by hand:
+
+```sh
+sudo /usr/syno/bin/synowebapi --exec api=SYNO.FotoTeam.Index method=reindex version=1
+```
+
+### Why it needs a host-side task at all
+
+DSM's media indexer is notified by DSM's **own file services** — SMB, File Station — not by filesystem
+events. A folder created over SMB appears in Photos instantly; the identical folder created by the
+bridge writing to disk directly is never noticed. So the bridge writes a flag saying "I created
+something", and a task running on the NAS triggers Photos' reindex.
+
+⛔ **The bridge deliberately cannot do this itself.** `synowebapi` is mode `700 root:root` and
+authenticates as `SYSTEM_ADMIN` purely by being root on the host. Mounting it into the container would
+not grant "the ability to reindex Photos" — it would grant unauthenticated admin access to **every** DSM
+Web API: users, shares, packages, certificates. The flag file is the security boundary: the container can
+*ask*, and only the host can *act*. The worst a fully compromised bridge can do through that channel is
+cause one extra reindex.
+
+### ⛔ Do not try to fix this with `synoindex`
+
+Measured on DSM 7, 2026-10-27. **Every one of these returned `exit=0` and had no effect:**
+
+| Attempted | Result |
+| --- | --- |
+| `synoindex -A <dir>` ("add a dir") | exit 0, nothing |
+| `synoindex -f -A <dir>` (file index) | exit 0, nothing |
+| `synoindex -R <dir>` / `-R <parent>` / `-R photo` | exit 0, nothing |
+| `synoindex -P SynologyPhotos -A <dir>` | exit 0, nothing |
+| `synoindex -p MediaIndex -A <dir>` | exit 0, nothing |
+| `indexfolder` | shared-folder granularity only (`SHARE_CREATE`/`REMOVE`/`RENAME`) |
+
+`synoindex` writes the legacy **MediaIndex**. Synology Photos keeps its **own** Postgres index at
+`/var/packages/SynologyPhotos/target/indexdb`, behind `pgbouncer`, and does not read MediaIndex. Those
+commands were correctly updating an index Photos ignores — and reported success while doing so.
+
+The only working lever is the Web API that Photos' own resync button calls, which is what the task uses.
+`FotoTeam` is DSM's internal name for the Shared Space. The call is asynchronous: it returns in ~76 ms
+having *queued* the scan, which then completes in a few seconds.
+
+Two other things worth knowing, both measured: **empty folders index fine** (so this is not "Photos only
+indexes media"), and **deletions propagate on their own** via `smbd` — creation from outside DSM's
+services was always the only gap.
+
 ## Everyday operations
 
 | Task | How |
