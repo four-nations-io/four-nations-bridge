@@ -52,9 +52,12 @@ classic recipe:
    in the app shows the exact download commands with your app's address filled
    in), copy them to the NAS, and connect:
 
-<!-- TODO(V1-block: github-assets): for V0.9d the scripts download from the app's
-     own /install path (e.g. https://your-app-domain/install/install-synology.sh);
-     swap to the GitHub-released asset URL at V1.0 close. -->
+The scripts come from the **public bridge repo at the release tag**, so what you download matches the
+signed image of that same release:
+`https://raw.githubusercontent.com/four-nations-io/four-nations-bridge/v<version>/scripts/…`.
+⭐ The **Install Bridge** page fills the version in for you — it derives the tag from the current
+release rather than carrying a hand-maintained pin, which had twice gone stale and sent creators
+installers older than their image.
 
 ```bash
 curl -fsSLO <release-url>/install-synology.sh
@@ -82,6 +85,9 @@ The script will:
 7. Ask **how you want to finish setup** — because a NAS usually has no browser
    you can reach, this defaults to one of the no-browser options below
 8. Start the container
+9. Install a small **Synology Photos reindex service** so folders the bridge creates show up in
+   Photos (see [below](#synology-photos-and-new-project-folders)) — nothing for you to do, and the
+   install still succeeds without it if your DSM can't support it
 
 ## 4. Finish setup
 
@@ -146,6 +152,68 @@ If you ever need to trigger it by hand:
 sudo /usr/syno/bin/synowebapi --exec api=SYNO.FotoTeam.Index method=reindex version=1
 ```
 
+### Already running a bridge from before this existed?
+
+A **new install** sets this up for you. So does **re-running the install script**, which is the
+documented way to update — so if you update, you get it with no extra step.
+
+⚠️ **Updating the container alone is not enough.** Pulling a newer image changes what runs *inside* the
+container; it cannot create a root-owned service on the host. That is deliberate — see the boundary note
+below. If you updated by bumping the image tag rather than re-running the installer, install just this
+part:
+
+```sh
+sudo bash install-synology.sh --photos-reindex-only
+```
+
+It asks for your bridge's state folder (default `/volume1/docker/four-nations-bridge/managed/_state`),
+or you can pass it directly:
+
+```sh
+sudo FN_STATE_DIR=/volume1/.../managed/_state bash install-synology.sh --photos-reindex-only
+```
+
+⛔ This mode **only** writes `/usr/local/bin/fn-photos-reindex.sh` and the systemd unit, then starts it.
+It does not read or change your compose file, your `.env`, or the container — so it is safe to run from
+a different copy of the scripts than the one your bridge was installed from.
+
+### Checking it works
+
+```sh
+systemctl status fn-photos-reindex
+```
+
+Should read **active (running)**. Then create a project in the app and watch the two halves separately —
+this is the split worth knowing, because a bridge that never signals and a service that never acts look
+identical from Photos:
+
+```sh
+# 1. did the BRIDGE signal? (mtime should match when you created the folder)
+ls -l /volume1/.../managed/_state/content-changed
+
+# 2. did the HOST act?
+journalctl -u fn-photos-reindex -n 20 --no-pager
+```
+
+| What you see | What it means |
+| --- | --- |
+| `reindex queued` | Working. Photos reconciles in the background, usually a few seconds. |
+| `FATAL: synowebapi not executable` | A DSM update moved the binary. The service stops loudly rather than pretending. |
+| `FAILED: reindex did not report success` | The API refused. The flag is **not** consumed, so it retries. |
+| `REFUSING: ... is a symlink` | Should never happen — the bridge never creates one. Investigate. |
+| No log line at all, and no flag file | The bridge isn't signalling. Check the container is on a release that includes it. |
+
+### Removing it
+
+```sh
+sudo systemctl disable --now fn-photos-reindex
+sudo rm -f /etc/systemd/system/fn-photos-reindex.service /usr/local/bin/fn-photos-reindex.sh
+sudo rm -rf /var/lib/fn-photos-reindex
+sudo systemctl daemon-reload
+```
+
+New folders then stay invisible in Photos until you re-index by hand, which is where things were before.
+
 ### Why it needs a host-side task at all
 
 DSM's media indexer is notified by DSM's **own file services** — SMB, File Station — not by filesystem
@@ -192,5 +260,7 @@ services was always the only gap.
 | Check the container | Container Manager → Container → `four-nations-bridge` |
 | Logs | Container Manager → Container → Details → Log |
 | Stop / start | Container Manager, or `docker compose stop`/`start` in the install folder |
-| Update to a new release | re-run the install script (pairing survives) |
+| Update to a new release | re-run the install script (pairing survives — and this also installs/refreshes the Photos reindex service) |
+| Photos reindex service | `systemctl status fn-photos-reindex` · logs: `journalctl -u fn-photos-reindex` |
+| New folders not showing in Photos | see [Checking it works](#checking-it-works) above |
 | Re-pair | see [security.md → Re-pairing](security.md#re-pairing) |

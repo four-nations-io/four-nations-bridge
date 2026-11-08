@@ -78,6 +78,47 @@ content; widen the bridge's view of your disk (adding a folder requires *you*
 to run a command/installer on *your* machine — the server can only ask);
 push code to your machine (releases are pull-based and signature-verified).
 
+## Synology only: the Photos reindex service (a root service on your NAS)
+
+On Synology, the installer adds one thing that runs **outside** the container, as root:
+`fn-photos-reindex.service`. You should know it exists and why, because it is the only part of this
+install with host privileges.
+
+**Why it has to exist.** A folder the bridge creates is invisible in Synology Photos until Photos
+re-indexes. DSM's indexer is notified by DSM's own file services (SMB, File Station), never by
+filesystem events — so a folder the bridge writes directly is never noticed. Triggering Photos requires
+`/usr/syno/bin/synowebapi`, which is mode `700 root:root`.
+
+⛔ **The container is deliberately not given that ability.** `synowebapi` authenticates as
+`SYSTEM_ADMIN` purely by being root on the host. Mounting it into the container would not grant "the
+ability to reindex Photos" — it would grant **unauthenticated admin access to every DSM Web API**:
+users, shares, packages, certificates. We rejected that, and also rejected an SMB credential in the
+container (a reusable LAN secret where none exists today).
+
+**How the split works.** The bridge writes a single flag file in its own folder saying "I created
+something". The root service only ever *reads* that flag and triggers the reindex. The container can
+**ask**; only the host can **act**.
+
+```
+bridge (unprivileged, uid 1031)  --one-bit flag-->  host service (root)  --> Photos reindex
+```
+
+⭐ **The root service never writes anything inside the bridge's folder.** It keeps its own state in
+`/var/lib/fn-photos-reindex`, which the container cannot reach. This is deliberate and load-bearing: an
+earlier draft cleared and restored the flag as root, and because `touch` follows symlinks, a compromised
+bridge could have raced a symlink into that path and had root create a file elsewhere on the NAS. Our
+own security review caught it before release. The fix removed the write entirely rather than guarding
+it, so there is no root write on any path the container controls.
+
+**What it can do, worst case.** If the bridge were fully compromised, the most it can achieve through
+this channel is cause extra Photos re-indexes, or stop its *own* folders appearing. It cannot read the
+flag's contents into anything (nothing parses them), cannot run commands, and cannot influence what the
+root service does beyond "reindex now".
+
+**Removing it** is three commands — see
+[synology.md → Removing it](synology.md#removing-it). Everything else keeps working; new folders just
+stay invisible in Photos until you re-index by hand.
+
 ## Release signing — what verification gives you
 
 Every published bridge image is signed at build time with the publisher's

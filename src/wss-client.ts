@@ -193,6 +193,11 @@ const REINDEX_SCAN_SECONDS = (() => {
   return Number.isFinite(n) && n >= 5 ? n : 30;
 })();
 const REINDEX_SCAN_INTERVAL_MS = REINDEX_SCAN_SECONDS * 1000;
+// seamless-deploys: a reconnect this soon after a 1012 ("service restart") close
+// is a gateway deploy moving this bridge between instances, so the full re-walk
+// is skipped (see the HELLO_ACK handler). Generous on purpose: the move itself
+// takes ~1 s; anything longer than this is treated as a real gap.
+const DEPLOY_MOVE_WINDOW_MS = 10 * 60 * 1000;
 
 export function startWssClient(state: SharedState): WssClient {
   let stopped = false;
@@ -211,6 +216,13 @@ export function startWssClient(state: SharedState): WssClient {
   // V0.7.b: incremental mtime-diff reindex sweep timer + single-flight guard.
   let reindexScanTimer: NodeJS.Timeout | null = null;
   let reindexScanRunning = false;
+  // seamless-deploys: how the LAST connection ended. A gateway deploy moves a
+  // bridge to another gateway instance by closing its socket with 1012 ("service
+  // restart"); a crash, network drop or real outage shows up as 1006 or similar.
+  // Captured BEFORE resetSyncState() wipes syncStatus, because "did the previous
+  // full walk finish?" is half of the decision to skip the next one.
+  let lastClose: { code: number; at: number; syncWasComplete: boolean } | null =
+    null;
   // Serialize all orchestrator passes (daily / on-enable / SYNC_PROJECT /
   // on-demand) — they share `state.thumbSyncStats`, so only one runs at a time.
   let syncChain: Promise<void> = Promise.resolve();
@@ -454,7 +466,39 @@ export function startWssClient(state: SharedState): WssClient {
         // sync from a stale earlier connection stops emitting.
         activeSyncAbort.stopped = true;
         activeSyncAbort = { stopped: false };
-        startInitialSync(ws, state, activeSyncAbort);
+        // seamless-deploys: skip the full re-walk when WE moved this bridge.
+        // A gateway deploy closes the socket with 1012 and the bridge is back on
+        // another instance ~1 s later; nothing on disk changed in that gap that
+        // the 30 s incremental sweep (runReindexScan) won't catch, because its
+        // dirMtimes baseline survives the reconnect. A full walk here would only
+        // make the gateway re-save the whole index. Every condition must hold,
+        // otherwise this is today's full sync:
+        //   · the previous connection closed with 1012 (a planned move, never a
+        //     crash or network drop),
+        //   · within DEPLOY_MOVE_WINDOW_MS (a long gap gets a full walk anyway),
+        //   · the previous full walk had FINISHED (an aborted walk left the
+        //     index incomplete),
+        //   · the incremental sweep has a baseline to diff against.
+        // Project detection still runs — it is cheap, and the new instance may
+        // need the list for its pending-project flush.
+        const move = lastClose;
+        lastClose = null;
+        const isDeployMove =
+          move !== null &&
+          move.code === 1012 &&
+          Date.now() - move.at < DEPLOY_MOVE_WINDOW_MS &&
+          move.syncWasComplete &&
+          state.dirMtimesInitialized;
+        if (isDeployMove) {
+          // eslint-disable-next-line no-console
+          console.log(
+            "bridge: reconnected after a gateway deploy move — skipping the full re-walk (incremental sweep covers the gap)",
+          );
+          state.syncStatus = "done";
+          void detectAndPushProjects(ws, state, { force: true });
+        } else {
+          startInitialSync(ws, state, activeSyncAbort);
+        }
         return;
       }
       if (msg?.type === "PONG") {
@@ -974,6 +1018,11 @@ export function startWssClient(state: SharedState): WssClient {
       activeReads.clear();
       state.helloAckedAt = null;
       state.bridgeDeviceId = null;
+      lastClose = {
+        code,
+        at: Date.now(),
+        syncWasComplete: state.syncStatus === "done",
+      };
       resetSyncState();
       const detail = { code, reason: reason ? reason.toString("utf8") : "" };
       // eslint-disable-next-line no-console
